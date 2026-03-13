@@ -1,6 +1,6 @@
 # bt-refractor
 
-`bt-refractor` 是一个用 Go 从零实现的 BitTorrent 单文件下载客户端。当前仓库面向数据中心式部署环境做了取舍：优先保证下载链路简单、吞吐直接、运行稳定，同时保留在需要时重新打开完整性校验的能力。
+`bt-refractor` 是一个用 Go 从零实现的 BitTorrent 单文件下载客户端。当前仓库面向数据中心式部署环境做了取舍：优先保证下载链路简单、吞吐直接、运行稳定，同时保留在需要时切回更严格校验路径的能力。
 
 编译后的二进制名称为 `btclient`。
 
@@ -82,19 +82,34 @@ tracker 访问有两种模式：
 
 ## 4. 数据中心默认策略
 
-当前实现默认按“可信网络、优先吞吐”的思路运行：
+当前实现默认按“可信网络、优先吞吐，但不完全放弃校验”的思路运行：
 
-- 提高了 request pipeline 深度
+- 保持兼容性更好的 `16 KiB` request block
+- 提高了每个 peer 的 request pipeline 深度
 - 降低了空闲轮询等待
 - 把高频 piece 成功日志改成批量进度日志
-- 默认不对每个 piece 做 SHA-1 校验
+- 默认不在热路径上对每个 piece 做 SHA-1 校验
+- 默认在下载结束后对一组分布式抽样 piece 做校验
 
-这样做的目的，是把 CPU 和日志 IO 尽量让给真实下载流量。
+这样做的目的，是把 CPU 和日志 IO 尽量让给真实下载流量，同时保留一层成本很低的落盘后核验。
 
-如果你要在更强调完整性的环境里运行，可以显式打开 piece 校验：
+这里有一个边界要说明清楚：
+
+- torrent 的 `piece size` 是写死在 `.torrent` 元数据里的，下载端不能修改
+- 下载端真正能调的是 request block 大小和在途请求窗口
+
+当前默认没有把 request block 继续放大，是为了兼容更多 peer；真正的提速来自更大的在途窗口，而不是去修改 torrent 自带的 `piece size`。
+
+如果你要在更强调完整性的环境里运行，可以显式打开全量 piece 校验：
 
 ```bash
 BTCLIENT_VERIFY_PIECES=1 ./btclient -i /data/job/input.torrent -o /data/output
+```
+
+如果你要继续手工调优数据中心吞吐，也可以通过环境变量调整：
+
+```bash
+BTCLIENT_PIPELINE_DEPTH=96 BTCLIENT_BLOCK_SIZE=16384 BTCLIENT_AUDIT_PIECES=48 ./btclient -i /data/job/input.torrent -o /data/output
 ```
 
 ## 5. 一次下载在做什么
@@ -110,8 +125,9 @@ BTCLIENT_VERIFY_PIECES=1 ./btclient -i /data/job/input.torrent -o /data/output
 7. peer `unchoke` 之后，worker 按 pipeline 连续发送 `request`
 8. peer 返回 `piece` 后，客户端下载 block 并按偏移拼装
 9. 数据直接写入目标文件
-10. 如果启用了 `BTCLIENT_VERIFY_PIECES=1`，每个 piece 在写盘前会先做 SHA-1 校验
-11. 全部 piece 完成后，下载结束
+10. 默认情况下，下载结束后会对一组抽样 piece 做校验
+11. 如果启用了 `BTCLIENT_VERIFY_PIECES=1`，每个 piece 在写盘前会先做 SHA-1 校验
+12. 全部 piece 完成后，下载结束
 
 ## 6. 仓库结构
 
@@ -222,4 +238,3 @@ tracker 返回里当前只消费：
 - 可分发
 - 可私有集成
 - 不要求署名
-

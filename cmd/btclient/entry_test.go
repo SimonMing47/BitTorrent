@@ -62,3 +62,31 @@ func TestBuildOutputPathRejectsTraversal(t *testing.T) {
 		t.Fatal("expected traversal path to be rejected")
 	}
 }
+
+func TestRuntimeSettingsFromEnv(t *testing.T) {
+	t.Setenv("BTCLIENT_BLOCK_SIZE", "32768")
+	t.Setenv("BTCLIENT_PIPELINE_DEPTH", "96")
+	t.Setenv("BTCLIENT_AUDIT_PIECES", "24")
+
+	settings, err := runtimeSettingsFromEnv()
+	if err != nil {
+		t.Fatalf("runtimeSettingsFromEnv() error = %v", err)
+	}
+	if settings.BlockSize != 32768 {
+		t.Fatalf("unexpected block size: %d", settings.BlockSize)
+	}
+	if settings.PipelineDepth != 96 {
+		t.Fatalf("unexpected pipeline depth: %d", settings.PipelineDepth)
+	}
+	if settings.AuditPieces != 24 {
+		t.Fatalf("unexpected audit pieces: %d", settings.AuditPieces)
+	}
+}
+
+func TestRuntimeSettingsFromEnvRejectsInvalidValue(t *testing.T) {
+	t.Setenv("BTCLIENT_PIPELINE_DEPTH", "bad")
+
+	if _, err := runtimeSettingsFromEnv(); err == nil {
+		t.Fatal("expected invalid env value to fail")
+	}
+}

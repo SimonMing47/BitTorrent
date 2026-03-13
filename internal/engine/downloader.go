@@ -17,7 +17,8 @@ import (
 
 const (
 	defaultBlockSize     = 16 * 1024
-	defaultPipelineDepth = 32
+	defaultPipelineDepth = 64
+	defaultAuditPieces   = 32
 	progressLogInterval  = 64
 )
 
@@ -28,6 +29,7 @@ type Settings struct {
 	BlockSize     int
 	PipelineDepth int
 	VerifyPieces  bool
+	AuditPieces   int
 }
 
 // Manager 负责在多个 peer 之间调度 piece 下载。
@@ -55,6 +57,12 @@ func New(meta manifest.Manifest, peers []discovery.Endpoint, peerID [20]byte, lo
 	}
 	if settings.PipelineDepth <= 0 {
 		settings.PipelineDepth = defaultPipelineDepth
+	}
+	if settings.AuditPieces < 0 {
+		settings.AuditPieces = 0
+	}
+	if !settings.VerifyPieces && settings.AuditPieces == 0 {
+		settings.AuditPieces = defaultAuditPieces
 	}
 
 	return &Manager{
@@ -96,6 +104,16 @@ func (m *Manager) Save(ctx context.Context, targetPath string) error {
 	}
 	if book.Completed() != m.meta.PieceCount() {
 		return fmt.Errorf("download incomplete: %d of %d pieces stored", book.Completed(), m.meta.PieceCount())
+	}
+	if err := store.Sync(); err != nil {
+		return err
+	}
+	if !m.settings.VerifyPieces && m.settings.AuditPieces > 0 {
+		checked, err := auditDownloadedPieces(targetPath, m.meta, m.settings.AuditPieces)
+		if err != nil {
+			return err
+		}
+		m.logger.Printf("post-download audit passed (%d pieces)", checked)
 	}
 	return nil
 }
@@ -271,8 +289,70 @@ func (s *fileStore) err() error {
 	return s.writeErr
 }
 
+func (s *fileStore) Sync() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.writeErr != nil {
+		return s.writeErr
+	}
+	return s.file.Sync()
+}
+
 func (s *fileStore) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.file.Close()
+}
+
+func auditDownloadedPieces(path string, meta manifest.Manifest, count int) (int, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer file.Close()
+
+	indexes := selectAuditPieces(meta.PieceCount(), count)
+	for _, index := range indexes {
+		offset, length, err := meta.PieceSpan(index)
+		if err != nil {
+			return 0, err
+		}
+		block := make([]byte, length)
+		if _, err := file.ReadAt(block, offset); err != nil {
+			return 0, fmt.Errorf("post-download audit read piece %d: %w", index, err)
+		}
+		if digest := sha1.Sum(block); digest != meta.PieceDigests[index] {
+			return 0, fmt.Errorf("post-download audit failed for piece %d", index)
+		}
+	}
+	return len(indexes), nil
+}
+
+func selectAuditPieces(total, count int) []int {
+	if total <= 0 || count <= 0 {
+		return nil
+	}
+	if count == 1 {
+		return []int{0}
+	}
+	if count >= total {
+		indexes := make([]int, total)
+		for index := range indexes {
+			indexes[index] = index
+		}
+		return indexes
+	}
+
+	indexes := make([]int, 0, count)
+	last := -1
+	for slot := 0; slot < count; slot++ {
+		index := slot * (total - 1) / (count - 1)
+		if index == last {
+			continue
+		}
+		indexes = append(indexes, index)
+		last = index
+	}
+	return indexes
 }

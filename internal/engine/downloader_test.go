@@ -1,6 +1,10 @@
 package engine
 
 import (
+	"crypto/sha1"
+	"os"
+	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/mac/bt-refractor/internal/manifest"
@@ -52,5 +56,38 @@ func TestCatalogLeaseReleaseAndComplete(t *testing.T) {
 	book.MarkDone(last.Index)
 	if _, ok, done := book.TryLease(bitmap, meta); ok || !done {
 		t.Fatalf("expected catalog to be done, got ok=%v done=%v", ok, done)
+	}
+}
+
+func TestSelectAuditPieces(t *testing.T) {
+	indexes := selectAuditPieces(10, 4)
+	expected := []int{0, 3, 6, 9}
+	if !reflect.DeepEqual(indexes, expected) {
+		t.Fatalf("unexpected audit indexes: got %v want %v", indexes, expected)
+	}
+}
+
+func TestAuditDownloadedPieces(t *testing.T) {
+	payload := []byte("abcdefghijklmnop")
+	piece0 := sha1.Sum(payload[:8])
+	piece1 := sha1.Sum(payload[8:])
+
+	meta := manifest.Manifest{
+		TotalLength:         int64(len(payload)),
+		StandardPieceLength: 8,
+		PieceDigests:        [][20]byte{piece0, piece1},
+	}
+
+	path := filepath.Join(t.TempDir(), "payload.bin")
+	if err := os.WriteFile(path, payload, 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	checked, err := auditDownloadedPieces(path, meta, 1)
+	if err != nil {
+		t.Fatalf("auditDownloadedPieces() error = %v", err)
+	}
+	if checked != 1 {
+		t.Fatalf("unexpected checked count: %d", checked)
 	}
 }

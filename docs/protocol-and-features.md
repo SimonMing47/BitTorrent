@@ -279,16 +279,34 @@ tracker 请求分成两类：
 
 因此默认策略是：
 
+- 保持 `16 KiB` request block
 - 更高的 request pipeline 深度
 - 更短的空闲等待
 - 更少的高频日志
-- 默认关闭每 piece SHA-1 校验
+- 默认关闭热路径的每 piece SHA-1 校验
+- 下载结束后做抽样 piece 校验
 
 这样做的收益是：
 
 - 降低 CPU 消耗
 - 降低日志 IO
 - 提高多 peer 并发下的有效吞吐
+- 仍保留一层基础的数据落盘核验
+
+这里要特别区分两件事：
+
+1. torrent 的 `piece size`
+   - 由制种时决定
+   - 下载端不能修改
+2. request block 大小
+   - 由下载端控制
+   - 可以影响每个 `request` 消息承载多少字节
+
+当前实现没有继续默认放大 request block，而是优先扩大在途请求窗口。原因是：
+
+- 这比“直接把单个 request 做大”更兼容现网 peer
+- 在 TCP 传输下，对高质量网络更有效的往往是足够的在途字节数
+- 在有少量丢包时，保留较小 request block 更稳妥
 
 ## 10. 如何重新打开完整性校验
 
@@ -299,6 +317,20 @@ BTCLIENT_VERIFY_PIECES=1 ./btclient -i /data/job/input.torrent -o /data/out
 ```
 
 打开之后，当前实现会在每个 piece 写盘前执行 SHA-1 校验。
+
+如果你在数据中心里继续调吞吐，也可以用这些环境变量：
+
+```bash
+BTCLIENT_PIPELINE_DEPTH=96
+BTCLIENT_BLOCK_SIZE=16384
+BTCLIENT_AUDIT_PIECES=48
+```
+
+推荐理解方式是：
+
+- 先优先调 `BTCLIENT_PIPELINE_DEPTH`
+- `BTCLIENT_BLOCK_SIZE` 保持在 `16 KiB` 附近更稳
+- `BTCLIENT_AUDIT_PIECES` 用来平衡基础可靠性和收尾成本
 
 ## 11. 当前测试是如何覆盖这些能力的
 
@@ -317,4 +349,3 @@ BTCLIENT_VERIFY_PIECES=1 ./btclient -i /data/job/input.torrent -o /data/out
    - 使用 fake tracker + fake peer 跑完整下载链路
 
 其中端到端测试显式打开了 piece 校验路径，用于确保“快速模式之外的完整性能力”仍然是可用的。
-

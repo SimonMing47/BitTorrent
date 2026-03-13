@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/mac/bt-refractor/internal/discovery"
@@ -95,9 +96,11 @@ func execute(
 	logger := log.New(logWriter, "", log.LstdFlags)
 	logger.Printf("tracker returned %d peers", len(reply.Peers))
 
-	manager := engine.New(meta, reply.Peers, peerID, logger, engine.Settings{
-		VerifyPieces: envFlagEnabled("BTCLIENT_VERIFY_PIECES"),
-	})
+	settings, err := runtimeSettingsFromEnv()
+	if err != nil {
+		return err
+	}
+	manager := engine.New(meta, reply.Peers, peerID, logger, settings)
 	return manager.Save(ctx, outputPath)
 }
 
@@ -135,4 +138,48 @@ func envFlagEnabled(key string) bool {
 	default:
 		return false
 	}
+}
+
+func runtimeSettingsFromEnv() (engine.Settings, error) {
+	settings := engine.Settings{
+		VerifyPieces: envFlagEnabled("BTCLIENT_VERIFY_PIECES"),
+	}
+
+	if value, ok, err := envInt("BTCLIENT_BLOCK_SIZE"); err != nil {
+		return engine.Settings{}, err
+	} else if ok {
+		settings.BlockSize = value
+	}
+
+	if value, ok, err := envInt("BTCLIENT_PIPELINE_DEPTH"); err != nil {
+		return engine.Settings{}, err
+	} else if ok {
+		settings.PipelineDepth = value
+	}
+
+	if !settings.VerifyPieces {
+		if value, ok, err := envInt("BTCLIENT_AUDIT_PIECES"); err != nil {
+			return engine.Settings{}, err
+		} else if ok {
+			settings.AuditPieces = value
+		}
+	}
+
+	return settings, nil
+}
+
+func envInt(key string) (int, bool, error) {
+	value, ok := os.LookupEnv(key)
+	if !ok || strings.TrimSpace(value) == "" {
+		return 0, false, nil
+	}
+
+	parsed, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil {
+		return 0, false, fmt.Errorf("invalid value for %s: %q", key, value)
+	}
+	if parsed < 0 {
+		return 0, false, fmt.Errorf("invalid value for %s: %q", key, value)
+	}
+	return parsed, true, nil
 }
