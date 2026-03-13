@@ -2,28 +2,54 @@
 
 本文档用于快速说明这个仓库到底在做什么、协议上实现了哪些内容、为什么默认行为会偏向数据中心环境。
 
-## 1. 这个库的定位
+## 1. 协议主线
 
-这个仓库是一个单文件 torrent 下载器。
+### 1.1 从 `.torrent` 到目标文件
 
-它的输入是：
+```mermaid
+flowchart LR
+    T[".torrent"] --> M["Manifest"]
+    M --> H["info_hash"]
+    M --> A["announce URL"]
+    A --> TR["tracker"]
+    TR --> PS["peers"]
+    PS --> HS["handshake"]
+    HS --> BF["bitfield"]
+    BF --> REQ["request / piece 循环"]
+    REQ --> WR["WriteAt"]
+    WR --> AU["抽样校验或全量校验"]
+    AU --> OUT["目标文件"]
+```
 
-- `.torrent` 文件
-- 输出根路径
+### 1.2 时序图
 
-它的输出是：
+```mermaid
+sequenceDiagram
+    participant CLI as btclient
+    participant MF as manifest
+    participant TR as tracker
+    participant EN as engine
+    participant PEER as peer
+    participant DISK as file
 
-- 基于 torrent 元数据 `name` 生成最终文件路径
-- 下载完成的目标文件
-
-这个仓库不是一个完整生态客户端，因此没有实现：
-
-- magnet
-- DHT
-- PEX
-- UDP tracker
-- 多文件 torrent
-- seeding
+    CLI->>MF: 读取 .torrent
+    MF-->>CLI: announce / name / pieces / info_hash
+    CLI->>TR: announce
+    TR-->>CLI: peers
+    CLI->>EN: 启动调度
+    EN->>PEER: handshake
+    PEER-->>EN: handshake
+    PEER-->>EN: bitfield
+    EN->>PEER: interested
+    PEER-->>EN: unchoke
+    loop pipeline 下载
+        EN->>PEER: request
+        PEER-->>EN: piece
+        EN->>DISK: WriteAt
+    end
+    EN->>DISK: Sync
+    EN->>EN: 抽样校验或全量校验
+```
 
 ## 2. 功能分层
 
@@ -205,6 +231,14 @@ tracker 请求分成两类：
    - 读取 PEM 证书
    - 通过 TLS 拨号访问 HTTPS tracker
 
+```mermaid
+flowchart LR
+    URL["announce URL"] --> MODE{"是否提供证书"}
+    MODE -- "否" --> TCP["普通 TCP 拨号"]
+    MODE -- "是" --> LOAD["读取 PEM"]
+    LOAD --> TLS["TLS 拨号"]
+```
+
 这条规则保证了“有证书走安全模式，没有证书走非安全模式”。
 
 ## 6. peer 握手细节
@@ -244,7 +278,23 @@ tracker 请求分成两类：
 - `piece`
 - `have`
 
-下载流程中最关键的是：
+### 7.1 消息推进关系
+
+```mermaid
+stateDiagram-v2
+    [*] --> Handshake
+    Handshake --> Bitfield
+    Bitfield --> Interested
+    Interested --> Choked
+    Choked --> Unchoked: 收到 unchoke
+    Unchoked --> Requesting
+    Requesting --> Requesting: request / piece
+    Requesting --> Choked: 收到 choke
+    Requesting --> Done: piece 完成
+    Done --> [*]
+```
+
+### 7.2 下载过程中最关键的动作
 
 1. 先读取对端 bitfield
 2. 发送 `interested`
@@ -262,6 +312,15 @@ tracker 请求分成两类：
 - `waiting`
 - `leased`
 - `done`
+
+```mermaid
+stateDiagram-v2
+    [*] --> waiting
+    waiting --> leased: worker 领取
+    leased --> waiting: 下载失败 / 连接中断
+    leased --> done: 写盘成功
+    done --> [*]
+```
 
 流程是：
 
@@ -308,7 +367,20 @@ tracker 请求分成两类：
 - 在 TCP 传输下，对高质量网络更有效的往往是足够的在途字节数
 - 在有少量丢包时，保留较小 request block 更稳妥
 
-## 10. 如何重新打开完整性校验
+## 10. 调优视角
+
+### 10.1 你真正能调的是什么
+
+```mermaid
+flowchart LR
+    A["torrent piece size"] -->|"下载端不能改"| X["固定输入"]
+    B["request block size"] --> C["可调"]
+    D["pipeline depth"] --> C
+    E["audit pieces"] --> C
+    C --> F["吞吐 / 兼容性 / 核验成本"]
+```
+
+### 10.2 如何重新打开完整性校验
 
 如果你不在可信数据中心环境里运行，或者要更强的落盘前校验，可以显式打开：
 

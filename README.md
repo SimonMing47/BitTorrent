@@ -4,7 +4,70 @@
 
 编译后的二进制名称为 `btclient`。
 
-## 1. 当前能力
+## 1. 一眼看懂
+
+### 1.1 下载总流程
+
+```mermaid
+flowchart LR
+    U["用户执行 btclient"] --> CLI["cmd/btclient"]
+    CLI --> MF["internal/manifest<br/>解析 .torrent / 计算 info_hash"]
+    CLI --> DS["internal/discovery<br/>announce / peers"]
+    DS --> TR["Tracker"]
+    TR --> PL["Peer 列表"]
+    PL --> EN["internal/engine<br/>调度下载"]
+    EN --> PW["internal/peerwire<br/>握手 / 消息帧 / bitfield"]
+    PW --> PEERS["公网 peers"]
+    EN --> FS["目标文件"]
+    EN --> AUDIT["抽样校验或全量校验"]
+```
+
+### 1.2 模块关系
+
+```mermaid
+flowchart TB
+    subgraph CLI["入口层"]
+        E["cmd/btclient"]
+    end
+
+    subgraph CORE["核心模块"]
+        B["internal/bencode"]
+        M["internal/manifest"]
+        D["internal/discovery"]
+        P["internal/peerwire"]
+        G["internal/engine"]
+    end
+
+    E --> M
+    E --> D
+    E --> G
+    M --> B
+    D --> B
+    G --> M
+    G --> D
+    G --> P
+```
+
+### 1.3 运行形态
+
+```text
+输入:
+  .torrent 文件
+  输出根路径
+  可选 tracker 证书
+
+处理:
+  解析 torrent
+  向 tracker announce
+  与多个 peer 并发握手和收数
+  直接写盘
+  下载结束后做抽样校验
+
+输出:
+  以 torrent name 命名的目标文件
+```
+
+## 2. 当前能力
 
 当前仓库已经覆盖一条完整的单文件 BT 下载闭环：
 
@@ -18,7 +81,8 @@
 - 完成 BitTorrent 握手
 - 处理 `bitfield`、`interested`、`choke`、`unchoke`、`request`、`piece`、`have`
 - 将下载数据直接写入目标文件
-- 在需要时按 piece 做 SHA-1 校验
+- 默认在下载结束后做抽样校验
+- 在需要时按 piece 做 SHA-1 全量校验
 
 当前明确不支持：
 
@@ -28,7 +92,7 @@
 - seeding / uploading
 - DHT / PEX / 扩展协议
 
-## 2. 命令行
+## 3. 命令行
 
 命令行只保留 3 个参数：
 
@@ -60,7 +124,7 @@ go build -o btclient ./cmd/btclient
 
 也就是说，`-o` 只提供输出根路径，最终文件名严格来自 torrent 元数据。
 
-## 3. tracker 访问模式
+## 4. tracker 访问模式
 
 tracker 访问有两种模式：
 
@@ -73,6 +137,16 @@ tracker 访问有两种模式：
    - 读取 PEM 证书并建立 TLS 请求
    - 适用于 HTTPS tracker
 
+```mermaid
+flowchart LR
+    A["announce URL"] --> B{"是否提供 -tls-path"}
+    B -- "否" --> C["普通 TCP 模式"]
+    B -- "是" --> D["加载 PEM 证书"]
+    D --> E["TLS 模式"]
+    C --> F["HTTP tracker"]
+    E --> G["HTTPS tracker"]
+```
+
 因此：
 
 - 没有证书时
@@ -80,7 +154,7 @@ tracker 访问有两种模式：
 - 传入证书时
   - 走安全模式
 
-## 4. 数据中心默认策略
+## 5. 数据中心默认策略
 
 当前实现默认按“可信网络、优先吞吐，但不完全放弃校验”的思路运行：
 
@@ -90,6 +164,17 @@ tracker 访问有两种模式：
 - 把高频 piece 成功日志改成批量进度日志
 - 默认不在热路径上对每个 piece 做 SHA-1 校验
 - 默认在下载结束后对一组分布式抽样 piece 做校验
+
+```mermaid
+flowchart LR
+    A["高质量网络"] --> B["扩大在途请求窗口"]
+    A --> C["保留较小 request block"]
+    B --> D["提升链路利用率"]
+    C --> E["降低 peer 兼容性风险"]
+    D --> F["吞吐更高"]
+    E --> F
+    F --> G["收尾做抽样校验"]
+```
 
 这样做的目的，是把 CPU 和日志 IO 尽量让给真实下载流量，同时保留一层成本很低的落盘后核验。
 
@@ -112,9 +197,38 @@ BTCLIENT_VERIFY_PIECES=1 ./btclient -i /data/job/input.torrent -o /data/output
 BTCLIENT_PIPELINE_DEPTH=96 BTCLIENT_BLOCK_SIZE=16384 BTCLIENT_AUDIT_PIECES=48 ./btclient -i /data/job/input.torrent -o /data/output
 ```
 
-## 5. 一次下载在做什么
+## 6. 一次下载在做什么
 
 一次完整下载的执行路径如下：
+
+```mermaid
+sequenceDiagram
+    participant User as 用户
+    participant CLI as btclient
+    participant Manifest as manifest
+    participant Tracker as tracker
+    participant Engine as engine
+    participant Peer as peer
+    participant File as 目标文件
+
+    User->>CLI: -i / -o / -tls-path
+    CLI->>Manifest: 读取并解析 .torrent
+    Manifest-->>CLI: announce / name / info_hash / pieces
+    CLI->>Tracker: announce(info_hash, peer_id, left, compact)
+    Tracker-->>CLI: peers
+    CLI->>Engine: 启动下载调度
+    Engine->>Peer: handshake + interested
+    Peer-->>Engine: bitfield + unchoke
+    loop 持续下载
+        Engine->>Peer: request
+        Peer-->>Engine: piece
+        Engine->>File: WriteAt(offset, block)
+    end
+    Engine->>File: Sync()
+    Engine->>Engine: 抽样校验或全量校验
+```
+
+文字版步骤：
 
 1. `cmd/btclient` 读取参数并生成 `peer_id`
 2. `internal/manifest` 解析 `.torrent`
@@ -129,26 +243,26 @@ BTCLIENT_PIPELINE_DEPTH=96 BTCLIENT_BLOCK_SIZE=16384 BTCLIENT_AUDIT_PIECES=48 ./
 11. 如果启用了 `BTCLIENT_VERIFY_PIECES=1`，每个 piece 在写盘前会先做 SHA-1 校验
 12. 全部 piece 完成后，下载结束
 
-## 6. 仓库结构
+## 7. 仓库结构
 
-- `cmd/btclient`
-  - CLI 入口，参数解析、环境变量读取、启动下载流程
-- `internal/bencode`
-  - 最小化 bencode 编解码器
-- `internal/manifest`
-  - `.torrent` 解析、`info_hash` 计算、piece 边界计算
-- `internal/discovery`
-  - tracker announce、compact peers 解码、TCP/TLS 拨号策略
-- `internal/peerwire`
-  - 握手帧、普通消息帧、bitfield 位图
-- `internal/engine`
-  - peer 会话、piece 调度、文件写入、可选 piece 校验
+```text
+cmd/
+  btclient/                CLI 入口
+internal/
+  bencode/                 最小 bencode 编解码
+  manifest/                torrent 元数据解析
+  discovery/               tracker announce / peers
+  peerwire/                握手、消息帧、bitfield
+  engine/                  调度、会话、写盘、校验
+workflow_integration_test.go
+                           fake tracker + fake peer 端到端测试
+```
 
-## 7. 协议要点
+## 8. 协议要点
 
 这个仓库只实现当前下载流程真正需要的 BitTorrent 子集：
 
-### 7.1 `.torrent`
+### 8.1 `.torrent`
 
 关心的字段只有：
 
@@ -163,7 +277,7 @@ BTCLIENT_PIPELINE_DEPTH=96 BTCLIENT_BLOCK_SIZE=16384 BTCLIENT_AUDIT_PIECES=48 ./
 
 其中 `pieces` 是一串连续的 SHA-1 摘要，每 20 个字节对应一个 piece。
 
-### 7.2 `info_hash`
+### 8.2 `info_hash`
 
 计算方式是：
 
@@ -173,7 +287,7 @@ BTCLIENT_PIPELINE_DEPTH=96 BTCLIENT_BLOCK_SIZE=16384 BTCLIENT_AUDIT_PIECES=48 ./
 
 tracker announce 和 peer 握手都依赖这个值。
 
-### 7.3 tracker announce
+### 8.3 tracker announce
 
 当前使用的参数包括：
 
@@ -191,7 +305,7 @@ tracker 返回里当前只消费：
 - `peers`
 - `failure reason`
 
-### 7.4 peer wire
+### 8.4 peer wire
 
 握手之后，当前会处理这些消息：
 
@@ -205,7 +319,7 @@ tracker 返回里当前只消费：
 
 下载过程中，worker 会在 peer 允许发送数据后持续保持多个 block request 在飞，以降低 RTT 对吞吐的影响。
 
-## 8. 测试
+## 9. 测试
 
 当前测试覆盖包括：
 
@@ -218,16 +332,17 @@ tracker 返回里当前只消费：
 - `internal/peerwire`
   - 握手帧、消息帧、bitfield 单元测试
 - `internal/engine`
-  - piece 调度和 peer 会话单元测试
+  - piece 调度、peer 会话、抽样校验单元测试
 - `workflow_integration_test.go`
   - 本地 fake tracker + fake peer 的端到端测试
 
-## 9. 文档
+## 10. 文档
 
 - [原始仓对比文档](docs/compare-with-original.md)
 - [协议与功能详解](docs/protocol-and-features.md)
+- [4+1 架构视图](docs/architecture-views.md)
 
-## 10. License
+## 11. License
 
 本仓库使用 `0BSD`，属于极宽松协议。
 

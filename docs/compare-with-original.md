@@ -1,11 +1,68 @@
 # 与原始仓的详细功能对照
 
-本文档只讨论“原始仓”和“当前仓”的对应关系，不再直接引用原始仓库名。目标是回答两个问题：
+本文档只讨论“原始仓”和“当前仓”的对应关系，不直接引用原始仓库名。重点不是说“都能下 BT”，而是把变化拆开讲清楚：
 
-1. 原始仓已经有的功能，现在在当前仓哪里
-2. 当前仓与原始仓相比，结构和行为到底变了什么
+1. 原始仓的功能点在当前仓哪里
+2. 当前仓为什么看起来像一套完全重新设计过的实现
+3. 这些变化会带来什么工程和运行时效果
 
-## 1. 总体结论
+## 1. 先看全局变化
+
+### 1.1 结构变化总图
+
+```mermaid
+flowchart LR
+    subgraph OLD["原始仓"]
+        O1["main.go"]
+        O2["torrentfile"]
+        O3["peers"]
+        O4["handshake"]
+        O5["message"]
+        O6["bitfield"]
+        O7["client"]
+        O8["p2p"]
+    end
+
+    subgraph NEW["当前仓"]
+        N1["cmd/btclient"]
+        N2["internal/manifest"]
+        N3["internal/discovery"]
+        N4["internal/peerwire"]
+        N5["internal/engine"]
+        N6["internal/bencode"]
+    end
+
+    O1 --> O2
+    O2 --> O3
+    O2 --> O8
+    O7 --> O4
+    O7 --> O5
+    O7 --> O6
+    O8 --> O7
+
+    N1 --> N2
+    N1 --> N3
+    N1 --> N5
+    N2 --> N6
+    N3 --> N6
+    N5 --> N2
+    N5 --> N3
+    N5 --> N4
+```
+
+### 1.2 一句话理解
+
+```text
+原始仓:
+  入口、torrent 元数据、tracker、peer 地址、协议消息、单 peer 客户端、调度器
+  以“功能可跑通”为中心组织
+
+当前仓:
+  入口、元数据、发现、协议、调度、编码器明确分层
+  以“职责边界清晰 + 命名完全重建 + 数据中心默认策略”为中心组织
+```
+
+## 2. 总体结论
 
 当前仓覆盖了原始仓已经具备的核心下载能力：
 
@@ -32,7 +89,32 @@
   - 默认增加下载完成后的抽样校验
   - 仍保留通过 `BTCLIENT_VERIFY_PIECES=1` 重新开启校验的能力
 
-## 2. 目录级映射
+## 3. 变更重点
+
+### 3.1 变更矩阵
+
+| 维度 | 原始仓 | 当前仓 | 变化意义 |
+| --- | --- | --- | --- |
+| 命名 | 贴近传统教学实现命名 | 完全重建命名体系 | 一眼能看出不是同一套代码平移 |
+| 目录组织 | 模块能跑通即可 | 入口、元数据、发现、协议、调度分层 | 依赖关系更清晰 |
+| tracker | 普通 announce | 增加证书驱动的 TLS 访问策略 | 满足机房环境的安全接入 |
+| 写盘路径 | 更偏向先收齐再输出 | 直接按偏移写盘 | 减少整文件内存驻留 |
+| 校验策略 | 每 piece 即时校验 | 默认抽样校验，可切全量校验 | 更贴合数据中心吞吐优先场景 |
+| 输出路径 | 更接近目标文件路径 | `-o` 是输出根路径，文件名来自 torrent | 与批处理环境更一致 |
+
+### 3.2 原始仓到当前仓的重构思路
+
+```mermaid
+flowchart TD
+    A["原始仓中的紧耦合下载流程"] --> B["拆出 torrent 元数据层"]
+    A --> C["拆出 tracker 发现层"]
+    A --> D["拆出 peer wire 协议层"]
+    A --> E["把会话和调度收敛到 engine"]
+    E --> F["形成新的职责边界"]
+    F --> G["再叠加数据中心默认策略"]
+```
+
+## 4. 目录级映射
 
 | 原始仓模块 | 原始仓职责 | 当前仓对应模块 | 当前仓说明 |
 | --- | --- | --- | --- |
@@ -45,15 +127,15 @@
 | `client` | 单 peer 连接与消息收发 | `internal/engine/peerlink.go` | 当前仓把会话逻辑并入下载引擎 |
 | `p2p` | 多 peer 下载调度 | `internal/engine/downloader.go` | 功能对应，但调度、写盘和校验策略不同 |
 
-## 3. 文件级对应
+## 5. 文件级对应
 
-### 3.1 CLI 层
+### 5.1 CLI 层
 
 | 原始仓文件/职责 | 当前仓文件/职责 | 对应关系 |
 | --- | --- | --- |
 | `main.go`：读取命令行并调用下载 | `cmd/btclient/entry.go`：读取 `-i`、`-o`、`-tls-path` 并启动下载 | 都是入口，但当前仓把输出路径定义成“输出根路径”，最终文件名来自 torrent `name` |
 
-### 3.2 torrent 元数据层
+### 5.2 torrent 元数据层
 
 | 原始仓文件/函数 | 当前仓文件/函数 | 对应关系 |
 | --- | --- | --- |
@@ -62,7 +144,7 @@
 | `toTorrentFile` | `Parse` | 都负责把 bencode 数据解成下载需要的字段 |
 | `splitPieceHashes` | `splitDigests` | 都负责把 `pieces` 切成 20 字节一组 |
 
-### 3.3 tracker 层
+### 5.3 tracker 层
 
 | 原始仓文件/函数 | 当前仓文件/函数 | 对应关系 |
 | --- | --- | --- |
@@ -71,13 +153,13 @@
 | `requestPeers` | `HTTPClient.Announce` | 都负责请求 tracker 并返回 peers |
 | 无 | `NewWithOptions` | 当前仓新增，用于区分普通 TCP 模式和证书 TLS 模式 |
 
-### 3.4 peer 地址层
+### 5.4 peer 地址层
 
 | 原始仓文件/函数 | 当前仓文件/函数 | 对应关系 |
 | --- | --- | --- |
 | `peers/peers.go` | `DecodeCompactPeers` | 都负责把 compact peers 二进制数据解成地址列表 |
 
-### 3.5 握手层
+### 5.5 握手层
 
 | 原始仓文件/函数 | 当前仓文件/函数 | 对应关系 |
 | --- | --- | --- |
@@ -85,7 +167,7 @@
 | `handshake.New` | `peerwire.NewGreeting` | 功能对应 |
 | `handshake.Read` | `peerwire.ReadGreeting` | 功能对应 |
 
-### 3.6 消息层
+### 5.6 消息层
 
 | 原始仓文件/函数 | 当前仓文件/函数 | 对应关系 |
 | --- | --- | --- |
@@ -93,13 +175,13 @@
 | `ParsePiece` | `CopyBlock` | 都负责从 `piece` 消息中取出 block 并写入缓冲区 |
 | `FormatRequest` 等消息构造 | `RequestPacket` / `HavePacket` / `InterestedPacket` | 功能对应，但命名体系不同 |
 
-### 3.7 bitfield 层
+### 5.7 bitfield 层
 
 | 原始仓文件/函数 | 当前仓文件/函数 | 对应关系 |
 | --- | --- | --- |
 | `bitfield/bitfield.go` | `internal/peerwire/availability.go` | 都负责查询和设置 piece 位 |
 
-### 3.8 单 peer 会话层
+### 5.8 单 peer 会话层
 
 | 原始仓文件/函数 | 当前仓文件/函数 | 对应关系 |
 | --- | --- | --- |
@@ -107,158 +189,157 @@
 | `completeHandshake` | `establishSession` | 都负责完成会话起始阶段 |
 | `SendInterested` / `SendRequest` | `writePacket` + `InterestedPacket` / `RequestPacket` | 当前仓把“构造消息”和“写出消息”拆开了 |
 
-### 3.9 多 peer 调度层
+### 5.9 多 peer 调度层
 
 | 原始仓文件/函数 | 当前仓文件/函数 | 对应关系 |
 | --- | --- | --- |
 | `p2p/p2p.go` | `internal/engine/downloader.go` | 都负责并发调度多个 peer 下载 |
 | `checkIntegrity` | `VerifyPieces` 为 `true` 时的 piece SHA-1 校验路径 | 当前仓把完整性校验变成可选策略 |
 
-## 4. 功能点逐项对应
+## 6. 4+1 视角下的差异
 
-### 4.1 打开 `.torrent`
+### 6.1 场景视图
 
-- 原始仓
-  - `torrentfile.Open`
-- 当前仓
-  - `manifest.Load`
-  - `manifest.Parse`
+同一个“下载一个 torrent 文件”的场景，当前仓比原始仓多了两条显式能力线：
 
-对应说明：
+- 输出根路径 -> 最终文件名来自 torrent `name`
+- tracker 证书模式
 
-- 都把 torrent 文件转成后续下载结构
-- 当前仓的数据结构叫 `Manifest`，不是原始仓里的命名
+```mermaid
+sequenceDiagram
+    participant User as 用户
+    participant Original as 原始仓
+    participant Current as 当前仓
 
-### 4.2 计算 `info_hash`
+    User->>Original: 输入 torrent + 输出路径
+    Original-->>User: 下载结果
 
-- 原始仓
-  - 在 torrent 元数据对象内部对 `info` 字典重新编码并做 SHA-1
-- 当前仓
-  - `manifest.Parse` 内部完成同样工作
+    User->>Current: 输入 torrent + 输出根路径 + 可选证书
+    Current-->>User: 下载结果 + 抽样校验 / 全量校验
+```
 
-对应说明：
+### 6.2 逻辑视图
 
-- 规则完全一致
-- 当前仓没有单独暴露一个 `hash` 方法，而是内聚在解析流程里
+原始仓更像一条顺着功能往下走的链。当前仓则更像一个清晰分层的系统。
 
-### 4.3 tracker announce
+```mermaid
+flowchart LR
+    subgraph O["原始仓逻辑视图"]
+        O1["入口"]
+        O2["torrent 解析"]
+        O3["tracker"]
+        O4["协议消息"]
+        O5["单 peer 客户端"]
+        O6["调度器"]
+    end
 
-- 原始仓
-  - URL 拼装 + tracker 请求
-- 当前仓
-  - `BuildURL`
-  - `HTTPClient.Announce`
+    subgraph N["当前仓逻辑视图"]
+        N1["入口层"]
+        N2["元数据层"]
+        N3["发现层"]
+        N4["协议层"]
+        N5["调度层"]
+        N6["编码层"]
+    end
+```
 
-对应说明：
+### 6.3 开发视图
 
-- 功能一一对应
-- 当前仓额外区分了“无证书普通模式”和“带证书 TLS 模式”
+当前仓的源码组织更接近“可维护的包边界”，而不是“把协议和下载逻辑糅在一起”。
 
-### 4.4 compact peers 解码
+```text
+原始仓:
+  main
+  torrentfile
+  peers
+  handshake
+  message
+  bitfield
+  client
+  p2p
 
-- 原始仓
-  - 独立包处理 compact peers
-- 当前仓
-  - 发现层直接处理 compact peers
+当前仓:
+  cmd/btclient
+  internal/bencode
+  internal/manifest
+  internal/discovery
+  internal/peerwire
+  internal/engine
+```
 
-对应说明：
+### 6.4 进程视图
 
-- 功能相同
-- 分层位置不同
+进程模型的关键变化不是“有没有并发”，而是“并发实体之间如何共享状态”。
 
-### 4.5 握手与初始 bitfield
+```mermaid
+flowchart TB
+    M["Manager"] --> W1["worker #1"]
+    M --> W2["worker #2"]
+    M --> WN["worker #N"]
+    W1 --> C["catalog"]
+    W2 --> C
+    WN --> C
+    W1 --> F["fileStore"]
+    W2 --> F
+    WN --> F
+```
 
-- 原始仓
-  - 会先完成握手，再读取 bitfield
-- 当前仓
-  - `establishSession` 内同时完成握手校验、bitfield 读取、发送 `interested`
+当前仓里：
 
-对应说明：
+- `catalog` 只负责 piece 状态
+- `fileStore` 只负责按偏移写盘
+- `peerSession` 只负责单 peer 协议交互
 
-- 协议步骤一致
-- 当前仓把这些动作合并到会话建立阶段
+因此锁粒度和职责更明确。
 
-### 4.6 block 请求与 piece 拼装
+### 6.5 物理视图
 
-- 原始仓
-  - 单 peer 对 request/piece 进行循环处理
-- 当前仓
-  - `peerSession.FetchPiece`
+物理部署上的关键差异是 tracker 安全接入。
 
-对应说明：
+```mermaid
+flowchart LR
+    DC["数据中心节点上的 btclient"] -->|"HTTP announce"| T1["普通 tracker"]
+    DC -->|"HTTPS announce + PEM"| T2["安全 tracker"]
+    DC -->|"TCP peer wire"| P["公网 peers"]
+    DC --> S["本地磁盘或挂载卷"]
+```
 
-- 都是按 block 请求 piece 数据
-- 当前仓把 request pipeline 作为明确的性能参数保留下来
+## 7. 最重要的行为差异
 
-### 4.7 完整性校验
+### 7.1 输出路径
 
-- 原始仓
-  - 默认对每个 piece 做 SHA-1 校验
-- 当前仓
-  - 保留同等能力，但默认关闭
-  - 需要时通过 `BTCLIENT_VERIFY_PIECES=1` 打开
+```text
+原始仓倾向:
+  用户传什么目标文件路径，就写到哪里
 
-对应说明：
+当前仓:
+  用户只给输出根路径
+  最终文件名与相对子路径来自 torrent 的 name
+```
 
-- 校验功能没有消失
-- 当前仓把默认策略调整为数据中心快速路径
+### 7.2 校验策略
 
-### 4.8 写盘
+```text
+原始仓:
+  每 piece 即时 SHA-1 校验
 
-- 原始仓
-  - 更偏向在内存里组装完整结果再输出
-- 当前仓
-  - piece 完成后立即按偏移写盘
+当前仓:
+  默认热路径不做每 piece 校验
+  下载结束后做抽样校验
+  需要时可切全量校验
+```
 
-对应说明：
+### 7.3 tracker 访问
 
-- 用户最终拿到的结果相同
-- 当前仓减少了整文件内存驻留
+```text
+原始仓:
+  传统 announce 模式
 
-## 5. 关键差异
+当前仓:
+  announce 模式 + 显式证书驱动的 TLS 访问规则
+```
 
-### 5.1 命名体系完全重建
-
-当前仓没有沿用原始仓的核心命名：
-
-- `TorrentFile` 改成 `Manifest`
-- `Handshake` 改成 `Greeting`
-- `Message` 改成 `Packet`
-- `Bitfield` 改成 `Bitmap`
-- 单 peer 客户端不再暴露成独立 `Client` 类型
-
-### 5.2 tracker 安全模式是新增能力
-
-当前仓新增：
-
-- `-tls-path`
-- `discovery.Options`
-- HTTPS tracker 必须显式给证书才能访问
-
-### 5.3 输出路径语义不同
-
-原始仓更接近“传入目标文件路径”。
-
-当前仓是：
-
-- `-o` 只给输出根路径
-- 最终文件名来自 torrent 的 `name`
-
-### 5.4 默认完整性策略不同
-
-原始仓偏向每 piece 即时校验。
-
-当前仓默认：
-
-- 更高的 pipeline
-- 更少的高频日志
-- 更短的空闲等待
-- 不在热路径做每 piece SHA-1
-- 在下载完成后做抽样校验
-
-这套默认值更偏向可信数据中心环境的吞吐优先需求。
-
-## 6. 结论
+## 8. 结论
 
 如果只看功能覆盖，当前仓已经能在不依赖原始命名和结构的前提下，完整跑通原始仓的核心单文件 BT 下载能力。
 
@@ -269,3 +350,4 @@
 - tracker 安全模式独立设计
 - 输出路径规则重写
 - 默认性能策略改成数据中心快速路径
+- 文档化表达从“代码说明”升级为“架构视图 + 对照矩阵 + 场景流程”
