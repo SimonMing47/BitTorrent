@@ -9,6 +9,7 @@ Current support matches the referenced baseline feature set:
 - `.torrent` files
 - single-file torrents
 - HTTP tracker announce
+- HTTPS tracker announce with optional custom certificate and TLS verify skip
 - compact peer list decoding
 - peer handshake, bitfield, interested, request, piece, and have messages
 - piece SHA-1 verification
@@ -34,6 +35,24 @@ Current non-goals:
 
 ```bash
 go run ./cmd/bt --torrent path/to/file.torrent --out path/to/output.bin
+```
+
+For HTTPS trackers:
+
+```bash
+go run ./cmd/bt \
+  --torrent path/to/file.torrent \
+  --out path/to/output.bin \
+  --tracker-cert path/to/tracker.pem
+```
+
+To explicitly skip TLS verification for the tracker:
+
+```bash
+go run ./cmd/bt \
+  --torrent path/to/file.torrent \
+  --out path/to/output.bin \
+  --tracker-skip-verify
 ```
 
 Positional arguments are also supported:

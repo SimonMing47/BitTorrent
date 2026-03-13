@@ -27,6 +27,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	torrentPath := fs.String("torrent", "", "path to the .torrent file")
 	outputPath := fs.String("out", "", "path to the output file")
 	port := fs.Uint("port", defaultAnnouncePort, "tracker port to announce")
+	trackerCert := fs.String("tracker-cert", "", "path to a PEM certificate used for HTTPS tracker requests")
+	trackerSkipVerify := fs.Bool("tracker-skip-verify", false, "skip TLS verification for HTTPS tracker requests")
 	quiet := fs.Bool("quiet", false, "suppress progress logging")
 
 	if err := fs.Parse(args); err != nil {
@@ -47,14 +49,32 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	if err := execute(context.Background(), *torrentPath, *outputPath, uint16(*port), *quiet, stdout); err != nil {
+	if err := execute(
+		context.Background(),
+		*torrentPath,
+		*outputPath,
+		uint16(*port),
+		tracker.Options{
+			CertificatePath: *trackerCert,
+			SkipTLSVerify:   *trackerSkipVerify,
+		},
+		*quiet,
+		stdout,
+	); err != nil {
 		fmt.Fprintf(stderr, "download failed: %v\n", err)
 		return 1
 	}
 	return 0
 }
 
-func execute(ctx context.Context, torrentPath, outputPath string, port uint16, quiet bool, logWriter io.Writer) error {
+func execute(
+	ctx context.Context,
+	torrentPath, outputPath string,
+	port uint16,
+	trackerOptions tracker.Options,
+	quiet bool,
+	logWriter io.Writer,
+) error {
 	meta, err := metainfo.Load(torrentPath)
 	if err != nil {
 		return err
@@ -65,7 +85,10 @@ func execute(ctx context.Context, torrentPath, outputPath string, port uint16, q
 		return err
 	}
 
-	announce := tracker.New(nil)
+	announce, err := tracker.NewWithOptions(trackerOptions)
+	if err != nil {
+		return err
+	}
 	reply, err := announce.Announce(ctx, meta.Announce, tracker.AnnounceRequest{
 		InfoHash: meta.InfoHash,
 		PeerID:   peerID,

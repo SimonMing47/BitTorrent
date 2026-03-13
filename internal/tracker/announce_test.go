@@ -2,10 +2,12 @@ package tracker
 
 import (
 	"context"
+	"encoding/pem"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"testing"
 	"time"
 
@@ -76,6 +78,106 @@ func TestAnnounce(t *testing.T) {
 	}
 	if !reply.Peers[0].Address.Equal(net.IPv4(127, 0, 0, 1)) || reply.Peers[0].Port != 6881 {
 		t.Fatalf("unexpected first peer: %+v", reply.Peers[0])
+	}
+}
+
+func TestAnnounceHTTPSWithSkipVerify(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		payload, err := bencode.Marshal(map[string]any{
+			"interval": int64(45),
+			"peers": []byte{
+				127, 0, 0, 1, 0x1A, 0xE1,
+			},
+		})
+		if err != nil {
+			t.Fatalf("Marshal() error = %v", err)
+		}
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+
+	client, err := NewWithOptions(Options{
+		Timeout:       time.Second,
+		SkipTLSVerify: true,
+	})
+	if err != nil {
+		t.Fatalf("NewWithOptions() error = %v", err)
+	}
+
+	reply, err := client.Announce(context.Background(), server.URL, AnnounceRequest{
+		InfoHash: [20]byte{1, 2, 3},
+		PeerID:   [20]byte{4, 5, 6},
+		Port:     6881,
+		Left:     42,
+		Compact:  true,
+	})
+	if err != nil {
+		t.Fatalf("Announce() error = %v", err)
+	}
+	if len(reply.Peers) != 1 {
+		t.Fatalf("unexpected peer count: %d", len(reply.Peers))
+	}
+}
+
+func TestAnnounceHTTPSWithCertificate(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		payload, err := bencode.Marshal(map[string]any{
+			"interval": int64(45),
+			"peers": []byte{
+				10, 0, 0, 8, 0x1A, 0xE9,
+			},
+		})
+		if err != nil {
+			t.Fatalf("Marshal() error = %v", err)
+		}
+		_, _ = w.Write(payload)
+	}))
+	defer server.Close()
+
+	certificate := server.Certificate()
+	pemBlock := pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: certificate.Raw,
+	})
+
+	dir := t.TempDir()
+	certificatePath := dir + "/tracker.pem"
+	if err := os.WriteFile(certificatePath, pemBlock, 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	client, err := NewWithOptions(Options{
+		Timeout:         time.Second,
+		CertificatePath: certificatePath,
+	})
+	if err != nil {
+		t.Fatalf("NewWithOptions() error = %v", err)
+	}
+
+	reply, err := client.Announce(context.Background(), server.URL, AnnounceRequest{
+		InfoHash: [20]byte{1, 2, 3},
+		PeerID:   [20]byte{4, 5, 6},
+		Port:     6881,
+		Left:     42,
+		Compact:  true,
+	})
+	if err != nil {
+		t.Fatalf("Announce() error = %v", err)
+	}
+	if len(reply.Peers) != 1 {
+		t.Fatalf("unexpected peer count: %d", len(reply.Peers))
+	}
+}
+
+func TestNewWithOptionsRejectsInvalidCertificate(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/broken.pem"
+	if err := os.WriteFile(path, []byte("not-a-certificate"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	if _, err := NewWithOptions(Options{CertificatePath: path}); err == nil {
+		t.Fatal("expected invalid certificate to fail")
 	}
 }
 

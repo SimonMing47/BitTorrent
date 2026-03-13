@@ -2,10 +2,13 @@ package tracker
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"time"
 
@@ -39,6 +42,13 @@ type AnnounceReply struct {
 	Peers    []Endpoint
 }
 
+// Options controls how tracker HTTP and HTTPS connections are established.
+type Options struct {
+	Timeout         time.Duration
+	CertificatePath string
+	SkipTLSVerify   bool
+}
+
 // HTTPClient announces to HTTP trackers.
 type HTTPClient struct {
 	Client *http.Client
@@ -50,6 +60,15 @@ func New(client *http.Client) *HTTPClient {
 		client = &http.Client{Timeout: 15 * time.Second}
 	}
 	return &HTTPClient{Client: client}
+}
+
+// NewWithOptions builds a tracker client with configurable TCP/TLS dialing.
+func NewWithOptions(options Options) (*HTTPClient, error) {
+	client, err := newHTTPClient(options)
+	if err != nil {
+		return nil, err
+	}
+	return &HTTPClient{Client: client}, nil
 }
 
 // BuildURL renders the final announce URL with query parameters.
@@ -147,4 +166,75 @@ func DecodeCompactPeers(blob []byte) ([]Endpoint, error) {
 		})
 	}
 	return peers, nil
+}
+
+func newHTTPClient(options Options) (*http.Client, error) {
+	if options.Timeout <= 0 {
+		options.Timeout = 15 * time.Second
+	}
+
+	dialContext := func(ctx context.Context, network, addr string) (net.Conn, error) {
+		dialer := net.Dialer{Timeout: options.Timeout}
+		return dialer.DialContext(ctx, network, addr)
+	}
+
+	transport := &http.Transport{
+		Proxy:       http.ProxyFromEnvironment,
+		DialContext: dialContext,
+	}
+
+	if options.CertificatePath != "" || options.SkipTLSVerify {
+		tlsConfig, err := buildTLSConfig(options)
+		if err != nil {
+			return nil, err
+		}
+		transport.DialTLSContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+			host, _, err := net.SplitHostPort(addr)
+			if err != nil {
+				host = addr
+			}
+
+			config := tlsConfig.Clone()
+			if config.ServerName == "" {
+				config.ServerName = host
+			}
+
+			dialer := &tls.Dialer{
+				NetDialer: &net.Dialer{Timeout: options.Timeout},
+				Config:    config,
+			}
+			return dialer.DialContext(ctx, network, addr)
+		}
+	}
+
+	return &http.Client{
+		Timeout:   options.Timeout,
+		Transport: transport,
+	}, nil
+}
+
+func buildTLSConfig(options Options) (*tls.Config, error) {
+	config := &tls.Config{
+		InsecureSkipVerify: options.SkipTLSVerify,
+		MinVersion:         tls.VersionTLS12,
+	}
+
+	if options.CertificatePath == "" {
+		return config, nil
+	}
+
+	pemData, err := os.ReadFile(options.CertificatePath)
+	if err != nil {
+		return nil, fmt.Errorf("read tracker certificate: %w", err)
+	}
+
+	pool, err := x509.SystemCertPool()
+	if err != nil || pool == nil {
+		pool = x509.NewCertPool()
+	}
+	if !pool.AppendCertsFromPEM(pemData) {
+		return nil, fmt.Errorf("tracker certificate %q is not valid PEM", options.CertificatePath)
+	}
+	config.RootCAs = pool
+	return config, nil
 }
