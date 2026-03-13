@@ -7,14 +7,14 @@ import (
 
 const protocolName = "BitTorrent protocol"
 
-// Greeting is the BitTorrent handshake frame.
+// Greeting 表示 BitTorrent 握手帧。
 type Greeting struct {
 	Flags    [8]byte
 	InfoHash [20]byte
 	PeerID   [20]byte
 }
 
-// NewGreeting creates a standard BitTorrent handshake.
+// NewGreeting 创建一个标准的 BitTorrent 握手。
 func NewGreeting(infoHash, peerID [20]byte) Greeting {
 	return Greeting{
 		InfoHash: infoHash,
@@ -22,7 +22,7 @@ func NewGreeting(infoHash, peerID [20]byte) Greeting {
 	}
 }
 
-// Encode serializes the handshake.
+// Encode 将握手内容编码成线协议字节流。
 func (g Greeting) Encode() []byte {
 	payload := make([]byte, len(protocolName)+49)
 	payload[0] = byte(len(protocolName))
@@ -34,7 +34,7 @@ func (g Greeting) Encode() []byte {
 	return payload
 }
 
-// ReadGreeting reads a handshake from a stream.
+// ReadGreeting 从输入流中读取并解析一个握手帧。
 func ReadGreeting(r io.Reader) (Greeting, error) {
 	var lengthPrefix [1]byte
 	if _, err := io.ReadFull(r, lengthPrefix[:]); err != nil {

@@ -8,8 +8,8 @@ import (
 	"strconv"
 )
 
-// Parse decodes a bencoded payload into generic Go values:
-// []byte, int64, []any, and map[string]any.
+// Parse 将 bencode 字节流解码为通用 Go 值。
+// 返回值只会使用 []byte、int64、[]any 和 map[string]any 这几种类型。
 func Parse(data []byte) (any, error) {
 	p := parser{data: data}
 	value, err := p.readValue()
@@ -22,7 +22,7 @@ func Parse(data []byte) (any, error) {
 	return value, nil
 }
 
-// Decode reads all input and decodes it as bencode.
+// Decode 读取全部输入，并按 bencode 规则完成解码。
 func Decode(r io.Reader) (any, error) {
 	data, err := io.ReadAll(r)
 	if err != nil {
@@ -31,7 +31,7 @@ func Decode(r io.Reader) (any, error) {
 	return Parse(data)
 }
 
-// Marshal serializes supported Go values back into canonical bencode.
+// Marshal 将支持的 Go 值重新编码为规范化的 bencode 字节序列。
 func Marshal(value any) ([]byte, error) {
 	var buf bytes.Buffer
 	if err := writeValue(&buf, value); err != nil {
@@ -66,7 +66,7 @@ func (p *parser) readValue() (any, error) {
 }
 
 func (p *parser) readInteger() (int64, error) {
-	p.pos++ // consume 'i'
+	p.pos++ // 吃掉整数起始标记 'i'
 	start := p.pos
 	for p.pos < len(p.data) && p.data[p.pos] != 'e' {
 		p.pos++
@@ -78,12 +78,12 @@ func (p *parser) readInteger() (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("invalid integer at byte %d: %w", start, err)
 	}
-	p.pos++ // consume 'e'
+	p.pos++ // 吃掉整数结束标记 'e'
 	return number, nil
 }
 
 func (p *parser) readList() ([]any, error) {
-	p.pos++ // consume 'l'
+	p.pos++ // 吃掉列表起始标记 'l'
 	var items []any
 	for {
 		if p.pos >= len(p.data) {
@@ -102,7 +102,7 @@ func (p *parser) readList() ([]any, error) {
 }
 
 func (p *parser) readDict() (map[string]any, error) {
-	p.pos++ // consume 'd'
+	p.pos++ // 吃掉字典起始标记 'd'
 	dict := make(map[string]any)
 	for {
 		if p.pos >= len(p.data) {
@@ -139,7 +139,7 @@ func (p *parser) readBytes() ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid string length at byte %d: %w", start, err)
 	}
-	p.pos++ // consume ':'
+	p.pos++ // 吃掉长度和内容之间的分隔符 ':'
 	if p.pos+length > len(p.data) {
 		return nil, io.ErrUnexpectedEOF
 	}

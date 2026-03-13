@@ -20,7 +20,7 @@ const (
 	defaultPipelineDepth = 8
 )
 
-// Settings controls peer and network behavior.
+// Settings 控制 peer 连接和下载行为的关键参数。
 type Settings struct {
 	DialTimeout   time.Duration
 	IOTimeout     time.Duration
@@ -28,7 +28,7 @@ type Settings struct {
 	PipelineDepth int
 }
 
-// Manager coordinates piece downloads across peers.
+// Manager 负责在多个 peer 之间调度 piece 下载。
 type Manager struct {
 	meta     manifest.Manifest
 	peers    []discovery.Endpoint
@@ -37,7 +37,7 @@ type Manager struct {
 	settings Settings
 }
 
-// New constructs a manager for a torrent session.
+// New 创建一个 torrent 下载会话的调度器。
 func New(meta manifest.Manifest, peers []discovery.Endpoint, peerID [20]byte, logger *log.Logger, settings Settings) *Manager {
 	if logger == nil {
 		logger = log.New(io.Discard, "", 0)
@@ -64,7 +64,7 @@ func New(meta manifest.Manifest, peers []discovery.Endpoint, peerID [20]byte, lo
 	}
 }
 
-// Save downloads the torrent payload directly into the target file.
+// Save 将整个 torrent 直接下载到目标文件，而不是先整体放入内存。
 func (m *Manager) Save(ctx context.Context, targetPath string) error {
 	if len(m.peers) == 0 {
 		return fmt.Errorf("tracker returned no peers")

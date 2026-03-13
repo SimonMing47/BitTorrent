@@ -8,7 +8,7 @@ import (
 	"github.com/mac/bt-refractor/internal/bencode"
 )
 
-// Manifest holds the supported subset of torrent metadata.
+// Manifest 表示当前实现支持的 torrent 元数据子集。
 type Manifest struct {
 	Announce            string
 	Name                string
@@ -18,7 +18,7 @@ type Manifest struct {
 	InfoHash            [20]byte
 }
 
-// Load reads and decodes a .torrent file.
+// Load 读取并解析一个 .torrent 文件。
 func Load(path string) (Manifest, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -27,7 +27,7 @@ func Load(path string) (Manifest, error) {
 	return Parse(data)
 }
 
-// Parse turns raw .torrent bytes into a Manifest.
+// Parse 将原始 .torrent 字节解析成 Manifest。
 func Parse(data []byte) (Manifest, error) {
 	rootValue, err := bencode.Parse(data)
 	if err != nil {
@@ -103,12 +103,12 @@ func Parse(data []byte) (Manifest, error) {
 	}, nil
 }
 
-// PieceCount reports the number of pieces in the torrent.
+// PieceCount 返回该 torrent 一共包含多少个 piece。
 func (m Manifest) PieceCount() int {
 	return len(m.PieceDigests)
 }
 
-// PieceSpan returns the absolute offset and piece length for a piece index.
+// PieceSpan 返回指定 piece 在目标文件中的绝对偏移和实际长度。
 func (m Manifest) PieceSpan(index int) (int64, int, error) {
 	if index < 0 || index >= len(m.PieceDigests) {
 		return 0, 0, fmt.Errorf("piece index %d out of bounds", index)

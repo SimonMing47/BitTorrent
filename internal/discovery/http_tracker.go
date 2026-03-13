@@ -15,7 +15,7 @@ import (
 	"github.com/mac/bt-refractor/internal/bencode"
 )
 
-// Endpoint describes a peer returned by a tracker.
+// Endpoint 表示 tracker 返回的一个 peer 地址。
 type Endpoint struct {
 	Address net.IP
 	Port    uint16
@@ -25,7 +25,7 @@ func (e Endpoint) String() string {
 	return net.JoinHostPort(e.Address.String(), strconv.Itoa(int(e.Port)))
 }
 
-// AnnounceRequest captures the query parameters needed for an HTTP announce.
+// AnnounceRequest 表示一次 HTTP announce 所需的查询参数。
 type AnnounceRequest struct {
 	InfoHash   [20]byte
 	PeerID     [20]byte
@@ -36,25 +36,25 @@ type AnnounceRequest struct {
 	Compact    bool
 }
 
-// AnnounceReply holds the useful tracker response fields.
+// AnnounceReply 表示当前下载器真正关心的 tracker 响应字段。
 type AnnounceReply struct {
 	Interval time.Duration
 	Peers    []Endpoint
 }
 
-// Options controls how tracker HTTP and HTTPS connections are established.
+// Options 控制 tracker 的 HTTP/HTTPS 连接建立方式。
 type Options struct {
 	Timeout         time.Duration
 	CertificatePath string
 	SkipTLSVerify   bool
 }
 
-// HTTPClient announces to HTTP trackers.
+// HTTPClient 负责向 HTTP 或 HTTPS tracker 发起 announce 请求。
 type HTTPClient struct {
 	Client *http.Client
 }
 
-// New constructs a tracker client with sane defaults.
+// New 使用默认参数创建一个 tracker 客户端。
 func New(client *http.Client) *HTTPClient {
 	if client == nil {
 		client = &http.Client{Timeout: 15 * time.Second}
@@ -62,7 +62,7 @@ func New(client *http.Client) *HTTPClient {
 	return &HTTPClient{Client: client}
 }
 
-// NewWithOptions builds a tracker client with configurable TCP/TLS dialing.
+// NewWithOptions 使用可配置的 TCP/TLS 拨号策略创建 tracker 客户端。
 func NewWithOptions(options Options) (*HTTPClient, error) {
 	client, err := newHTTPClient(options)
 	if err != nil {
@@ -71,7 +71,7 @@ func NewWithOptions(options Options) (*HTTPClient, error) {
 	return &HTTPClient{Client: client}, nil
 }
 
-// BuildURL renders the final announce URL with query parameters.
+// BuildURL 根据 announce 参数拼出最终请求 URL。
 func BuildURL(raw string, req AnnounceRequest) (string, error) {
 	base, err := url.Parse(raw)
 	if err != nil {
@@ -96,7 +96,7 @@ func BuildURL(raw string, req AnnounceRequest) (string, error) {
 	return base.String(), nil
 }
 
-// Announce requests peers from the configured tracker.
+// Announce 向指定 tracker 发起请求并解析 peers 列表。
 func (c *HTTPClient) Announce(ctx context.Context, announceURL string, req AnnounceRequest) (AnnounceReply, error) {
 	urlWithQuery, err := BuildURL(announceURL, req)
 	if err != nil {
@@ -151,7 +151,7 @@ func (c *HTTPClient) Announce(ctx context.Context, announceURL string, req Annou
 	}, nil
 }
 
-// DecodeCompactPeers decodes the compact tracker peer string.
+// DecodeCompactPeers 解析 tracker 返回的 compact peers 二进制列表。
 func DecodeCompactPeers(blob []byte) ([]Endpoint, error) {
 	const compactPeerSize = 6
 	if len(blob)%compactPeerSize != 0 {

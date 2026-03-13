@@ -6,7 +6,7 @@ import (
 	"io"
 )
 
-// Kind is the numeric message code used on the peer wire.
+// Kind 表示 peer wire 协议里的消息编号。
 type Kind byte
 
 const (
@@ -21,14 +21,14 @@ const (
 	KindCancel
 )
 
-// Packet is a single peer message or keepalive.
+// Packet 表示一条 peer 消息，或一条 keepalive。
 type Packet struct {
 	Kind      Kind
 	Payload   []byte
 	KeepAlive bool
 }
 
-// Encode serializes a packet into its length-prefixed wire format.
+// Encode 将 Packet 编码成带长度前缀的线协议格式。
 func (p Packet) Encode() []byte {
 	if p.KeepAlive {
 		return make([]byte, 4)
@@ -41,7 +41,7 @@ func (p Packet) Encode() []byte {
 	return buf
 }
 
-// ReadPacket decodes a packet from the network stream.
+// ReadPacket 从网络流中读取并解析一条 Packet。
 func ReadPacket(r io.Reader) (Packet, error) {
 	var lengthPrefix [4]byte
 	if _, err := io.ReadFull(r, lengthPrefix[:]); err != nil {
@@ -62,17 +62,17 @@ func ReadPacket(r io.Reader) (Packet, error) {
 	}, nil
 }
 
-// Control constructs a payload-less control packet.
+// Control 构造一条没有负载的控制类消息。
 func Control(kind Kind) Packet {
 	return Packet{Kind: kind}
 }
 
-// InterestedPacket expresses download interest to a peer.
+// InterestedPacket 构造 Interested 消息，表示当前端点希望下载数据。
 func InterestedPacket() Packet {
 	return Control(KindInterested)
 }
 
-// RequestPacket asks a peer for a block within a piece.
+// RequestPacket 构造 Request 消息，请求某个 piece 内的一段 block。
 func RequestPacket(piece, offset, length int) Packet {
 	body := make([]byte, 12)
 	binary.BigEndian.PutUint32(body[0:4], uint32(piece))
@@ -81,7 +81,7 @@ func RequestPacket(piece, offset, length int) Packet {
 	return Packet{Kind: KindRequest, Payload: body}
 }
 
-// ParseRequest extracts the piece index, block offset, and block size.
+// ParseRequest 从 Request 消息中提取 piece 编号、块偏移和块长度。
 func ParseRequest(packet Packet) (int, int, int, error) {
 	if packet.Kind != KindRequest {
 		return 0, 0, 0, fmt.Errorf("expected request packet, got %d", packet.Kind)
@@ -95,14 +95,14 @@ func ParseRequest(packet Packet) (int, int, int, error) {
 		nil
 }
 
-// HavePacket announces that a piece has been completed.
+// HavePacket 构造 Have 消息，表示某个 piece 已经完成。
 func HavePacket(piece int) Packet {
 	body := make([]byte, 4)
 	binary.BigEndian.PutUint32(body, uint32(piece))
 	return Packet{Kind: KindHave, Payload: body}
 }
 
-// ParseHave extracts the piece index from a HAVE packet.
+// ParseHave 从 Have 消息中取出 piece 编号。
 func ParseHave(packet Packet) (int, error) {
 	if packet.Kind != KindHave {
 		return 0, fmt.Errorf("expected have packet, got %d", packet.Kind)
@@ -113,7 +113,7 @@ func ParseHave(packet Packet) (int, error) {
 	return int(binary.BigEndian.Uint32(packet.Payload)), nil
 }
 
-// PiecePacket wraps block bytes for a piece response.
+// PiecePacket 构造 Piece 消息，用于返回请求到的块数据。
 func PiecePacket(piece, offset int, block []byte) Packet {
 	body := make([]byte, 8+len(block))
 	binary.BigEndian.PutUint32(body[0:4], uint32(piece))
@@ -122,7 +122,7 @@ func PiecePacket(piece, offset int, block []byte) Packet {
 	return Packet{Kind: KindPiece, Payload: body}
 }
 
-// CopyBlock copies a PIECE payload into the destination buffer.
+// CopyBlock 将 Piece 消息里的 block 拷贝到目标缓冲区。
 func CopyBlock(packet Packet, expectedPiece int, dest []byte) (int, error) {
 	if packet.Kind != KindPiece {
 		return 0, fmt.Errorf("expected piece packet, got %d", packet.Kind)
