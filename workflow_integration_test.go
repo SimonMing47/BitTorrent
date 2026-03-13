@@ -98,6 +98,7 @@ func TestEndToEndDownload(t *testing.T) {
 		IOTimeout:     2 * time.Second,
 		BlockSize:     6,
 		PipelineDepth: 2,
+		VerifyPieces:  true,
 	})
 	if err := manager.Save(context.Background(), outputPath); err != nil {
 		t.Fatalf("manager.Save() error = %v", err)

@@ -34,7 +34,7 @@ func TestEstablishSession(t *testing.T) {
 				return err
 			}
 			if packet.Kind != peerwire.KindInterested {
-				return errors.New("客户端没有发送 interested")
+				return errors.New("client did not send interested")
 			}
 			return nil
 		})
@@ -107,7 +107,7 @@ func TestPeerSessionFetchPieceAndSignalHave(t *testing.T) {
 				return err
 			}
 			if packet.Kind != peerwire.KindInterested {
-				return errors.New("客户端没有发送 interested")
+				return errors.New("client did not send interested")
 			}
 
 			if _, err := conn.Write(peerwire.Control(peerwire.KindUnchoke).Encode()); err != nil {
@@ -121,7 +121,7 @@ func TestPeerSessionFetchPieceAndSignalHave(t *testing.T) {
 					return err
 				}
 				if request.Kind != peerwire.KindRequest {
-					return errors.New("客户端没有发送 request")
+					return errors.New("client did not send request")
 				}
 
 				pieceIndex, begin, length, err := peerwire.ParseRequest(request)
@@ -129,7 +129,7 @@ func TestPeerSessionFetchPieceAndSignalHave(t *testing.T) {
 					return err
 				}
 				if pieceIndex != 0 {
-					return errors.New("请求了错误的 piece 编号")
+					return errors.New("client requested the wrong piece index")
 				}
 
 				block := append([]byte(nil), payload[begin:begin+length]...)
@@ -148,7 +148,7 @@ func TestPeerSessionFetchPieceAndSignalHave(t *testing.T) {
 				return err
 			}
 			if index != 3 {
-				return errors.New("客户端发送了错误的 have 编号")
+				return errors.New("client sent the wrong have index")
 			}
 			return nil
 		})

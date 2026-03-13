@@ -50,7 +50,8 @@ type Options struct {
 
 // HTTPClient 负责向 HTTP 或 HTTPS tracker 发起 announce 请求。
 type HTTPClient struct {
-	Client *http.Client
+	Client     *http.Client
+	tlsEnabled bool
 }
 
 // New 使用默认参数创建一个 tracker 客户端。
@@ -58,7 +59,7 @@ func New(client *http.Client) *HTTPClient {
 	if client == nil {
 		client = &http.Client{Timeout: 15 * time.Second}
 	}
-	return &HTTPClient{Client: client}
+	return &HTTPClient{Client: client, tlsEnabled: true}
 }
 
 // NewWithOptions 使用可配置的 TCP/TLS 拨号策略创建 tracker 客户端。
@@ -67,7 +68,7 @@ func NewWithOptions(options Options) (*HTTPClient, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &HTTPClient{Client: client}, nil
+	return &HTTPClient{Client: client, tlsEnabled: options.TLSPath != ""}, nil
 }
 
 // BuildURL 根据 announce 参数拼出最终请求 URL。
@@ -100,6 +101,13 @@ func (c *HTTPClient) Announce(ctx context.Context, announceURL string, req Annou
 	urlWithQuery, err := BuildURL(announceURL, req)
 	if err != nil {
 		return AnnounceReply{}, err
+	}
+	parsedURL, err := url.Parse(urlWithQuery)
+	if err != nil {
+		return AnnounceReply{}, err
+	}
+	if parsedURL.Scheme == "https" && !c.tlsEnabled {
+		return AnnounceReply{}, fmt.Errorf("https trackers require -tls-path")
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, urlWithQuery, nil)
@@ -223,7 +231,7 @@ func buildTLSConfig(options Options) (*tls.Config, error) {
 
 	pemData, err := os.ReadFile(options.TLSPath)
 	if err != nil {
-		return nil, fmt.Errorf("读取 tracker 证书失败: %w", err)
+		return nil, fmt.Errorf("read tracker certificate: %w", err)
 	}
 
 	pool, err := x509.SystemCertPool()
@@ -231,7 +239,7 @@ func buildTLSConfig(options Options) (*tls.Config, error) {
 		pool = x509.NewCertPool()
 	}
 	if !pool.AppendCertsFromPEM(pemData) {
-		return nil, fmt.Errorf("tracker 证书 %q 不是合法 PEM", options.TLSPath)
+		return nil, fmt.Errorf("tracker certificate %q is not valid PEM", options.TLSPath)
 	}
 	config.RootCAs = pool
 	return config, nil

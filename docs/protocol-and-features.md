@@ -1,90 +1,71 @@
 # 协议与功能详解
 
-本文档面向第一次接触这个仓库的读者，目标是用最短路径讲清楚三件事：
-
-- 这个库在解决什么问题
-- 它的功能是怎么分层实现的
-- 它在 BitTorrent 协议层到底做了哪些事情
+本文档用于快速说明这个仓库到底在做什么、协议上实现了哪些内容、为什么默认行为会偏向数据中心环境。
 
 ## 1. 这个库的定位
 
-这个库是一个“单文件 torrent 下载器”，不是一个完整的 BitTorrent 生态客户端。
+这个仓库是一个单文件 torrent 下载器。
 
 它的输入是：
 
-- 一个 `.torrent` 文件
-- 一个输出目录路径
+- `.torrent` 文件
+- 输出根路径
 
 它的输出是：
 
-- 下载并校验后的目标文件
+- 基于 torrent 元数据 `name` 生成最终文件路径
+- 下载完成的目标文件
 
-最终输出文件名不是由命令行直接给定，而是自动使用 torrent 元数据里的 `name` 字段。
+这个仓库不是一个完整生态客户端，因此没有实现：
 
-它当前覆盖的是最小可用下载闭环：
-
-1. 解析 `.torrent`
-2. 找 tracker
-3. 找 peers
-4. 跟 peer 建立连接
-5. 下载并校验 pieces
-6. 写出文件
+- magnet
+- DHT
+- PEX
+- UDP tracker
+- 多文件 torrent
+- seeding
 
 ## 2. 功能分层
 
 ### 2.1 `internal/bencode`
 
-这是整个项目最底层的编码工具。
+这一层提供最小 bencode 能力：
 
-它负责：
+- 解析整数
+- 解析字节串
+- 解析列表
+- 解析字典
+- 将这些值重新编码
 
-- 解析 bencode 整数
-- 解析 bencode 字节串
-- 解析 bencode 列表
-- 解析 bencode 字典
-- 把这些值重新编码回 bencode
-
-为什么需要它：
-
-- `.torrent` 文件本身就是 bencode
-- tracker 返回也通常是 bencode
+`.torrent` 本身和 tracker 响应都依赖这一层。
 
 ### 2.2 `internal/manifest`
 
-这一层负责 torrent 元数据。
+这一层负责 torrent 元数据解析。
 
-它的输入是 `.torrent` 原始字节，输出是 `Manifest`。
+它把 `.torrent` 变成 `Manifest`，其中最关键的字段有：
 
-`Manifest` 里保存的是下载真正需要的信息：
-
-- tracker 地址
-- 文件名
-- 文件总长度
-- 标准 piece 长度
-- 每个 piece 的 SHA-1
-- `info_hash`
+- `Announce`
+- `Name`
+- `TotalLength`
+- `StandardPieceLength`
+- `PieceDigests`
+- `InfoHash`
 
 ### 2.3 `internal/discovery`
 
-这一层负责发现 peer。
+这一层负责 peer 发现。
 
-它做的事情是：
+它负责：
 
 1. 组装 announce URL
-2. 发起 HTTP 或 HTTPS 请求
-3. 解析 tracker 返回
-4. 把 compact peers 转换成 `Endpoint`
-
-它的输出是：
-
-- announce 间隔
-- 可连接的 peer 列表
+2. 请求 tracker
+3. 解析 tracker bencode 响应
+4. 解 compact peers
 
 ### 2.4 `internal/peerwire`
 
 这一层负责 BitTorrent peer wire 协议的消息格式。
-
-它并不直接做下载调度，只负责“消息长什么样”。
 
 它定义了：
 
@@ -94,93 +75,89 @@
 
 ### 2.5 `internal/engine`
 
-这一层是下载器核心。
+这一层是下载调度核心。
 
 它负责：
 
 - 建立 peer 会话
-- 根据 bitfield 选择 piece
-- 控制 request pipeline
-- 收集 block
-- 校验 piece
-- 把 piece 写到正确文件偏移
+- 管理 piece 领取和归还
+- 按 pipeline 连续请求 block
+- 收集 piece 数据
+- 可选做 SHA-1 校验
+- 写盘
 
-## 3. 下载时序
+## 3. 输出路径规则
 
-可以把当前下载流程理解成下面这条线：
+命令行里：
+
+- `-o` 只表示输出根路径
+
+最终文件名不由命令行给出，而是直接取 torrent `name`。
+
+因此：
 
 ```text
-.torrent -> Manifest -> tracker announce -> peers -> peer handshake
--> bitfield -> interested -> request/piece 循环 -> SHA-1 校验 -> 写盘
+btclient -i /jobs/a.torrent -o /data/out
 ```
 
-更细一点是：
+如果 torrent 的 `name` 是 `release.iso`，结果就是：
 
-1. `cmd/btclient` 读取命令行参数
-2. `manifest.Load` 解析 `.torrent`
-3. 入口层根据 `-o` 目录和 torrent 的 `name` 组装最终输出文件路径
-4. `discovery.HTTPClient.Announce` 找到 peers
-5. `engine.Manager.Save` 为 peers 启动 worker
-5. `engine.establishSession` 完成握手和 bitfield 读取
-6. `peerSession.FetchPiece` 按块请求数据
-7. `Manager.runPeer` 对 piece 做校验并写盘
+```text
+/data/out/release.iso
+```
+
+如果 torrent 的 `name` 是 `images/release.iso`，结果就是：
+
+```text
+/data/out/images/release.iso
+```
+
+为了不让 torrent 元数据跳出输出根路径，当前实现会拒绝绝对路径和 `..` 路径穿越。
 
 ## 4. `.torrent` 协议细节
 
 ### 4.1 根字典
 
-当前实现只依赖：
+当前实现只消费：
 
 - `announce`
 - `info`
 
 ### 4.2 `info` 字典
 
-当前实现只支持单文件，因此只关心：
+当前实现只支持单文件模式，因此只消费：
 
 - `name`
 - `length`
 - `piece length`
 - `pieces`
 
-如果发现 `files` 字段，就会判定为多文件 torrent，并直接返回“不支持”。
+如果 `info` 中出现 `files`，当前实现会直接判定为多文件 torrent，不继续执行。
 
 ### 4.3 `pieces`
 
-`pieces` 是一个二进制串，不是人类可读文本。
+`pieces` 是连续的 SHA-1 摘要字节串，不是普通文本。
 
-它的结构是：
+规则是：
 
-- 第 1 个 20 字节：第 0 个 piece 的 SHA-1
-- 第 2 个 20 字节：第 1 个 piece 的 SHA-1
-- 第 3 个 20 字节：第 2 个 piece 的 SHA-1
-- 依次类推
-
-因此，piece 总数就是：
-
-```text
-len(pieces) / 20
-```
+- 每 20 个字节表示一个 piece 的 SHA-1
+- piece 总数等于 `len(pieces) / 20`
 
 ### 4.4 `info_hash`
 
 `info_hash` 的计算方式是：
 
 1. 取出 `info` 字典
-2. 对这个字典重新做 bencode 编码
+2. 对 `info` 重新做 bencode 编码
 3. 对编码结果做 SHA-1
 
-这一步非常关键，因为：
-
-- tracker announce 要用它
-- peer 握手也要用它
-- 如果 `info_hash` 不一致，说明根本不是同一个 torrent
+tracker announce 和 peer 握手都依赖它。
 
 ## 5. tracker 协议细节
 
 ### 5.1 announce 参数
 
-当前实现会带上这些核心参数：
+当前实现会带上这些参数：
 
 - `info_hash`
 - `peer_id`
@@ -190,237 +167,154 @@ len(pieces) / 20
 - `left`
 - `compact`
 
-含义如下：
+语义分别是：
 
 - `info_hash`
   - 当前 torrent 的唯一标识
 - `peer_id`
-  - 当前客户端的 peer 标识
+  - 当前客户端标识
 - `port`
-  - 告诉 tracker 当前客户端声称使用的端口
+  - 当前客户端对外声称的端口
 - `uploaded`
-  - 已上传字节数，当前实现固定为 0
+  - 已上传字节数
 - `downloaded`
-  - 已下载字节数，当前实现固定为 0
+  - 已下载字节数
 - `left`
-  - 剩余未完成字节数，当前实现初始为文件总长度
+  - 剩余未完成字节数
 - `compact`
-  - 要求 tracker 用 compact peer 格式返回 peers
+  - 请求 tracker 用 compact 格式返回 peers
 
 ### 5.2 tracker 返回
 
-当前实现只消费这几个字段：
+当前实现只消费：
 
 - `interval`
 - `peers`
 - `failure reason`
 
-处理方式：
+### 5.3 普通模式与安全模式
 
-- 有 `failure reason`
-  - 直接报错
-- 没有 `interval`
-  - 报错
-- 没有 `peers`
-  - 报错
+tracker 请求分成两类：
 
-### 5.3 tracker 安全模式
+1. 普通模式
+   - 不提供 `-tls-path`
+   - 使用普通 TCP 拨号
+   - 仅允许非 HTTPS tracker
+2. 安全模式
+   - 提供 `-tls-path`
+   - 读取 PEM 证书
+   - 通过 TLS 拨号访问 HTTPS tracker
 
-当前实现支持通过证书进入 tracker 安全模式。
+这条规则保证了“有证书走安全模式，没有证书走非安全模式”。
 
-命令行参数为：
+## 6. peer 握手细节
 
-- `-tls-path`
-
-这部分是通过自定义 `http.Transport` 完成的。
-
-具体分支如下：
-
-- 未配置证书
-  - 使用普通模式请求 tracker
-- 配置了证书
-  - 使用 TLS 拨号请求 tracker
-
-## 6. peer 握手协议细节
-
-握手帧格式：
+握手帧格式是：
 
 ```text
-<pstrlen><pstr><reserved 8 bytes><info_hash 20 bytes><peer_id 20 bytes>
+<pstrlen><pstr><reserved><info_hash><peer_id>
 ```
 
-字段解释：
+其中：
 
-- `pstrlen`
-  - 协议名称长度
 - `pstr`
-  - 固定文本 `BitTorrent protocol`
+  - 固定为 `BitTorrent protocol`
 - `reserved`
   - 8 字节保留位
 - `info_hash`
-  - torrent 标识
+  - 当前 torrent 标识
 - `peer_id`
-  - peer 标识
+  - 当前 peer 标识
 
-本实现的校验点：
+当前实现会在握手后立即检查：
 
-- `pstrlen` 不能为 0
-- `pstr` 必须是 `BitTorrent protocol`
-- 对端返回的 `info_hash` 必须与本地 torrent 一致
+- 对端返回的 `info_hash` 是否一致
 
-如果 `info_hash` 不一致，说明这个 peer 不是当前 torrent 的正确对端，连接会被丢弃。
+如果不一致，连接直接失败。
 
-## 7. peer 消息协议细节
+## 7. peer wire 消息细节
 
-### 7.1 通用格式
+当前实现会处理这些消息：
 
-普通消息：
+- `bitfield`
+- `interested`
+- `choke`
+- `unchoke`
+- `request`
+- `piece`
+- `have`
 
-```text
-<length prefix 4 bytes><message id 1 byte><payload>
-```
+下载流程中最关键的是：
 
-keepalive：
+1. 先读取对端 bitfield
+2. 发送 `interested`
+3. 等待 `unchoke`
+4. 连续发送多个 `request`
+5. 读取 `piece`
+6. 将 block 拷入目标 piece 缓冲区
 
-```text
-<0x00000000>
-```
+## 8. piece 调度细节
 
-### 7.2 当前实现处理的消息
+当前实现中的调度由 `catalog` 管理。
 
-#### `choke`
-
-- 编号：`0`
-- 含义：对端暂时不允许我们继续发请求
-
-#### `unchoke`
-
-- 编号：`1`
-- 含义：对端允许我们继续请求 block
-
-#### `interested`
-
-- 编号：`2`
-- 含义：我们告诉对端，我对你持有的数据感兴趣
-
-#### `have`
-
-- 编号：`4`
-- 含义：某个 piece 已经可用
-
-#### `bitfield`
-
-- 编号：`5`
-- 含义：对端当前持有哪些 piece
-
-#### `request`
-
-- 编号：`6`
-- payload：
-
-```text
-<piece index 4 bytes><begin 4 bytes><length 4 bytes>
-```
-
-#### `piece`
-
-- 编号：`7`
-- payload：
-
-```text
-<piece index 4 bytes><begin 4 bytes><block bytes>
-```
-
-## 8. bitfield 细节
-
-`bitfield` 本质上是一个按位表示的 piece 集合。
-
-例如一个字节：
-
-```text
-10100000
-```
-
-表示前几个 piece 中：
-
-- 第 0 个 piece：有
-- 第 1 个 piece：没有
-- 第 2 个 piece：有
-- 第 3 个 piece：没有
-
-`Bitmap.Contains` 用于判断对端是否有某个 piece，`Bitmap.Mark` 用于把某个 piece 标记成可用。
-
-## 9. piece 下载细节
-
-### 9.1 为什么要按 block 下载
-
-一个 piece 往往比单次网络请求大，因此通常会把 piece 拆成多个 block。
-
-当前实现里：
-
-- `BlockSize` 默认 `16 KiB`
-- `PipelineDepth` 默认 `8`
-
-也就是说，一个 peer 在 unchoke 状态下，最多可以在一轮里挂起 8 个未完成请求。
-
-### 9.2 下载过程
-
-对一个 piece，当前实现做的是：
-
-1. 创建一块 piece 缓冲区
-2. 不断发送 `request`
-3. 读取 `piece` 响应
-4. 把返回的 `block` 按 `begin` 偏移写入缓冲区
-5. 直到该 piece 所有字节全部收齐
-
-### 9.3 校验与落盘
-
-piece 收齐后不会立刻认为成功，而是：
-
-1. 对 piece 缓冲区做 SHA-1
-2. 与 `Manifest.PieceDigests[index]` 对比
-3. 一致才写盘
-4. 不一致则把 piece 放回待下载状态
-
-这种设计的作用是：
-
-- 防止坏数据污染输出文件
-- 防止单个 peer 发来错误 piece 时直接导致结果文件损坏
-
-## 10. 并发调度细节
-
-`engine.Manager` 会为每个 peer 启动一个 worker。
-
-worker 的行为大致是：
-
-1. 先读取该 peer 的 bitfield
-2. 从 `catalog` 里领取一个该 peer 真正持有的 piece
-3. 下载这个 piece
-4. 校验
-5. 写盘
-6. 继续领取下一个 piece
-
-`catalog` 的作用相当于一个并发安全的任务分发器：
+每个 piece 只有 3 种状态：
 
 - `waiting`
-  - 还没被领取
 - `leased`
-  - 已经被某个 worker 领取
 - `done`
-  - 已完成
 
-如果 worker 下载失败，会把 piece 从 `leased` 放回 `waiting`，让别的 peer 继续尝试。
+流程是：
 
-## 11. 当前实现的边界
+1. worker 只从当前 peer 已拥有的 piece 中领取任务
+2. 领取后状态从 `waiting` 变为 `leased`
+3. 下载失败时，piece 放回 `waiting`
+4. 下载成功并写盘后，状态变为 `done`
 
-当前这个库的设计目标是“先把最小闭环下载链路打通”，所以它有明确边界：
+## 9. 数据中心默认性能策略
 
-- 只支持单文件 torrent
-- 只支持 tracker 模式发现 peer
-- 只支持 compact peers
-- 没有做 seeding
-- 没有做上传路径
-- 没有做扩展协议协商
-- 没有做更复杂的 piece 选择策略
+当前仓库默认假设部署环境满足两点：
 
-这也是为什么它适合作为一个“协议学习清晰、代码边界明确”的 BT 下载器基础版本。
+- peer 相对可信
+- 吞吐比逐 piece 的完整性校验更重要
+
+因此默认策略是：
+
+- 更高的 request pipeline 深度
+- 更短的空闲等待
+- 更少的高频日志
+- 默认关闭每 piece SHA-1 校验
+
+这样做的收益是：
+
+- 降低 CPU 消耗
+- 降低日志 IO
+- 提高多 peer 并发下的有效吞吐
+
+## 10. 如何重新打开完整性校验
+
+如果你不在可信数据中心环境里运行，或者要更强的落盘前校验，可以显式打开：
+
+```bash
+BTCLIENT_VERIFY_PIECES=1 ./btclient -i /data/job/input.torrent -o /data/out
+```
+
+打开之后，当前实现会在每个 piece 写盘前执行 SHA-1 校验。
+
+## 11. 当前测试是如何覆盖这些能力的
+
+测试分成三层：
+
+1. 协议级单元测试
+   - `internal/bencode`
+   - `internal/manifest`
+   - `internal/discovery`
+   - `internal/peerwire`
+2. 会话与调度级单元测试
+   - `internal/engine/downloader_test.go`
+   - `internal/engine/peerlink_test.go`
+3. 本地端到端测试
+   - `workflow_integration_test.go`
+   - 使用 fake tracker + fake peer 跑完整下载链路
+
+其中端到端测试显式打开了 piece 校验路径，用于确保“快速模式之外的完整性能力”仍然是可用的。
+

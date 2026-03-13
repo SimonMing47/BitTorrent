@@ -131,6 +131,28 @@ func TestAnnounceHTTPSWithCertificate(t *testing.T) {
 	}
 }
 
+func TestAnnounceHTTPSRequiresCertificate(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("unexpected request without tracker certificate")
+	}))
+	defer server.Close()
+
+	client, err := NewWithOptions(Options{Timeout: time.Second})
+	if err != nil {
+		t.Fatalf("NewWithOptions() error = %v", err)
+	}
+
+	if _, err := client.Announce(context.Background(), server.URL, AnnounceRequest{
+		InfoHash: [20]byte{1, 2, 3},
+		PeerID:   [20]byte{4, 5, 6},
+		Port:     6881,
+		Left:     42,
+		Compact:  true,
+	}); err == nil {
+		t.Fatal("expected https tracker without certificate to fail")
+	}
+}
+
 func TestNewWithOptionsRejectsInvalidCertificate(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + "/broken.pem"

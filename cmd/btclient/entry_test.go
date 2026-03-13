@@ -16,7 +16,7 @@ func TestRunRejectsMissingRequiredFlags(t *testing.T) {
 	if code != 2 {
 		t.Fatalf("expected exit code 2, got %d", code)
 	}
-	if !strings.Contains(stderr.String(), "用法: btclient -i input.torrent -o output.dir [-tls-path cert.pem]") {
+	if !strings.Contains(stderr.String(), "Usage: btclient -i INPUT.torrent -o OUTPUT_PATH [-tls-path CERT.pem]") {
 		t.Fatalf("unexpected usage output: %q", stderr.String())
 	}
 }
@@ -41,14 +41,24 @@ func TestBuildOutputPath(t *testing.T) {
 	}
 }
 
-func TestBuildOutputPathUsesBaseName(t *testing.T) {
+func TestBuildOutputPathPreservesTorrentRelativePath(t *testing.T) {
 	dir := t.TempDir()
 	target, err := buildOutputPath(dir, "nested/path/debian.iso")
 	if err != nil {
 		t.Fatalf("buildOutputPath() error = %v", err)
 	}
 
-	if target != filepath.Join(dir, "debian.iso") {
-		t.Fatalf("unexpected sanitized target path: %q", target)
+	expected := filepath.Join(dir, "nested/path/debian.iso")
+	if target != expected {
+		t.Fatalf("unexpected target path: %q", target)
+	}
+	if _, err := os.Stat(filepath.Dir(expected)); err != nil {
+		t.Fatalf("expected nested output directory to exist: %v", err)
+	}
+}
+
+func TestBuildOutputPathRejectsTraversal(t *testing.T) {
+	if _, err := buildOutputPath(t.TempDir(), "../escape.iso"); err == nil {
+		t.Fatal("expected traversal path to be rejected")
 	}
 }

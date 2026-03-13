@@ -17,7 +17,8 @@ import (
 
 const (
 	defaultBlockSize     = 16 * 1024
-	defaultPipelineDepth = 8
+	defaultPipelineDepth = 32
+	progressLogInterval  = 64
 )
 
 // Settings 控制 peer 连接和下载行为的关键参数。
@@ -26,6 +27,7 @@ type Settings struct {
 	IOTimeout     time.Duration
 	BlockSize     int
 	PipelineDepth int
+	VerifyPieces  bool
 }
 
 // Manager 负责在多个 peer 之间调度 piece 下载。
@@ -93,7 +95,7 @@ func (m *Manager) Save(ctx context.Context, targetPath string) error {
 		return store.err()
 	}
 	if book.Completed() != m.meta.PieceCount() {
-		return fmt.Errorf("download incomplete: %d of %d pieces verified", book.Completed(), m.meta.PieceCount())
+		return fmt.Errorf("download incomplete: %d of %d pieces stored", book.Completed(), m.meta.PieceCount())
 	}
 	return nil
 }
@@ -118,7 +120,7 @@ func (m *Manager) runPeer(ctx context.Context, endpoint discovery.Endpoint, book
 			return
 		}
 		if !ok {
-			time.Sleep(100 * time.Millisecond)
+			time.Sleep(10 * time.Millisecond)
 			continue
 		}
 
@@ -129,10 +131,12 @@ func (m *Manager) runPeer(ctx context.Context, endpoint discovery.Endpoint, book
 			return
 		}
 
-		if digest := sha1.Sum(block); digest != lease.Digest {
-			book.Release(lease.Index)
-			m.logger.Printf("peer %s failed hash check for piece %d", endpoint, lease.Index)
-			continue
+		if m.settings.VerifyPieces {
+			if digest := sha1.Sum(block); digest != lease.Digest {
+				book.Release(lease.Index)
+				m.logger.Printf("peer %s failed hash check for piece %d", endpoint, lease.Index)
+				continue
+			}
 		}
 
 		if err := store.WriteAt(lease.Offset, block); err != nil {
@@ -143,7 +147,13 @@ func (m *Manager) runPeer(ctx context.Context, endpoint discovery.Endpoint, book
 
 		doneCount, total := book.MarkDone(lease.Index)
 		_ = session.SignalHave(lease.Index)
-		m.logger.Printf("piece %d verified (%d/%d)", lease.Index, doneCount, total)
+		if doneCount == total || doneCount%progressLogInterval == 0 {
+			if m.settings.VerifyPieces {
+				m.logger.Printf("completed %d/%d pieces (verified)", doneCount, total)
+			} else {
+				m.logger.Printf("completed %d/%d pieces", doneCount, total)
+			}
+		}
 	}
 }
 

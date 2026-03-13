@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/mac/bt-refractor/internal/discovery"
 	"github.com/mac/bt-refractor/internal/engine"
@@ -25,16 +26,16 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("btclient", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 
-	torrentPath := fs.String("i", "", "种子文件路径")
-	outputDir := fs.String("o", "", "下载输出目录路径")
-	tlsPath := fs.String("tls-path", "", "tracker 安全模式证书路径")
+	torrentPath := fs.String("i", "", "path to the input torrent file")
+	outputDir := fs.String("o", "", "output root path")
+	tlsPath := fs.String("tls-path", "", "PEM certificate path for secure tracker requests")
 
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 
 	if *torrentPath == "" || *outputDir == "" {
-		fmt.Fprintln(stderr, "用法: btclient -i input.torrent -o output.dir [-tls-path cert.pem]")
+		fmt.Fprintln(stderr, "Usage: btclient -i INPUT.torrent -o OUTPUT_PATH [-tls-path CERT.pem]")
 		return 2
 	}
 
@@ -48,7 +49,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		},
 		stdout,
 	); err != nil {
-		fmt.Fprintf(stderr, "下载失败: %v\n", err)
+		fmt.Fprintf(stderr, "download failed: %v\n", err)
 		return 1
 	}
 	return 0
@@ -92,21 +93,27 @@ func execute(
 	}
 
 	logger := log.New(logWriter, "", log.LstdFlags)
-	logger.Printf("tracker 返回 %d 个 peer", len(reply.Peers))
+	logger.Printf("tracker returned %d peers", len(reply.Peers))
 
-	manager := engine.New(meta, reply.Peers, peerID, logger, engine.Settings{})
+	manager := engine.New(meta, reply.Peers, peerID, logger, engine.Settings{
+		VerifyPieces: envFlagEnabled("BTCLIENT_VERIFY_PIECES"),
+	})
 	return manager.Save(ctx, outputPath)
 }
 
 func buildOutputPath(outputDir, torrentName string) (string, error) {
-	fileName := filepath.Base(torrentName)
-	if fileName == "." || fileName == string(filepath.Separator) || fileName == "" {
-		return "", fmt.Errorf("种子中的文件名无效: %q", torrentName)
+	cleanName := filepath.Clean(torrentName)
+	if torrentName == "" || cleanName == "." || cleanName == ".." || filepath.IsAbs(torrentName) || filepath.IsAbs(cleanName) {
+		return "", fmt.Errorf("invalid torrent name %q", torrentName)
 	}
-	if err := os.MkdirAll(outputDir, 0o755); err != nil {
-		return "", fmt.Errorf("创建输出目录失败: %w", err)
+	if strings.HasPrefix(cleanName, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("invalid torrent name %q", torrentName)
 	}
-	return filepath.Join(outputDir, fileName), nil
+	target := filepath.Join(outputDir, cleanName)
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return "", fmt.Errorf("create output path: %w", err)
+	}
+	return target, nil
 }
 
 func generatePeerID() ([20]byte, error) {
@@ -114,4 +121,18 @@ func generatePeerID() ([20]byte, error) {
 	copy(peerID[:], []byte("-BR0001-"))
 	_, err := rand.Read(peerID[8:])
 	return peerID, err
+}
+
+func envFlagEnabled(key string) bool {
+	value, ok := os.LookupEnv(key)
+	if !ok {
+		return false
+	}
+
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
