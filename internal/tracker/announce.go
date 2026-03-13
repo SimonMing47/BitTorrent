@@ -1,0 +1,150 @@
+package tracker
+
+import (
+	"context"
+	"fmt"
+	"net"
+	"net/http"
+	"net/url"
+	"strconv"
+	"time"
+
+	"github.com/mac/bt-refractor/internal/bencode"
+)
+
+// Endpoint describes a peer returned by a tracker.
+type Endpoint struct {
+	Address net.IP
+	Port    uint16
+}
+
+func (e Endpoint) String() string {
+	return net.JoinHostPort(e.Address.String(), strconv.Itoa(int(e.Port)))
+}
+
+// AnnounceRequest captures the query parameters needed for an HTTP announce.
+type AnnounceRequest struct {
+	InfoHash   [20]byte
+	PeerID     [20]byte
+	Port       uint16
+	Uploaded   int64
+	Downloaded int64
+	Left       int64
+	Compact    bool
+}
+
+// AnnounceReply holds the useful tracker response fields.
+type AnnounceReply struct {
+	Interval time.Duration
+	Peers    []Endpoint
+}
+
+// HTTPClient announces to HTTP trackers.
+type HTTPClient struct {
+	Client *http.Client
+}
+
+// New constructs a tracker client with sane defaults.
+func New(client *http.Client) *HTTPClient {
+	if client == nil {
+		client = &http.Client{Timeout: 15 * time.Second}
+	}
+	return &HTTPClient{Client: client}
+}
+
+// BuildURL renders the final announce URL with query parameters.
+func BuildURL(raw string, req AnnounceRequest) (string, error) {
+	base, err := url.Parse(raw)
+	if err != nil {
+		return "", err
+	}
+
+	compactValue := "0"
+	if req.Compact {
+		compactValue = "1"
+	}
+
+	query := url.Values{
+		"compact":    []string{compactValue},
+		"downloaded": []string{strconv.FormatInt(req.Downloaded, 10)},
+		"info_hash":  []string{string(req.InfoHash[:])},
+		"left":       []string{strconv.FormatInt(req.Left, 10)},
+		"peer_id":    []string{string(req.PeerID[:])},
+		"port":       []string{strconv.Itoa(int(req.Port))},
+		"uploaded":   []string{strconv.FormatInt(req.Uploaded, 10)},
+	}
+	base.RawQuery = query.Encode()
+	return base.String(), nil
+}
+
+// Announce requests peers from the configured tracker.
+func (c *HTTPClient) Announce(ctx context.Context, announceURL string, req AnnounceRequest) (AnnounceReply, error) {
+	urlWithQuery, err := BuildURL(announceURL, req)
+	if err != nil {
+		return AnnounceReply{}, err
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, urlWithQuery, nil)
+	if err != nil {
+		return AnnounceReply{}, err
+	}
+
+	resp, err := c.Client.Do(httpReq)
+	if err != nil {
+		return AnnounceReply{}, err
+	}
+	defer resp.Body.Close()
+
+	payload, err := bencode.Decode(resp.Body)
+	if err != nil {
+		return AnnounceReply{}, err
+	}
+
+	dict, ok := payload.(map[string]any)
+	if !ok {
+		return AnnounceReply{}, fmt.Errorf("tracker response must be a dictionary")
+	}
+
+	if failure, ok := dict["failure reason"]; ok {
+		if text, ok := failure.([]byte); ok {
+			return AnnounceReply{}, fmt.Errorf("tracker failure: %s", string(text))
+		}
+		return AnnounceReply{}, fmt.Errorf("tracker returned failure")
+	}
+
+	intervalRaw, ok := dict["interval"].(int64)
+	if !ok {
+		return AnnounceReply{}, fmt.Errorf("tracker response missing interval")
+	}
+
+	peerBlob, ok := dict["peers"].([]byte)
+	if !ok {
+		return AnnounceReply{}, fmt.Errorf("tracker response missing compact peer list")
+	}
+	peers, err := DecodeCompactPeers(peerBlob)
+	if err != nil {
+		return AnnounceReply{}, err
+	}
+
+	return AnnounceReply{
+		Interval: time.Duration(intervalRaw) * time.Second,
+		Peers:    peers,
+	}, nil
+}
+
+// DecodeCompactPeers decodes the compact tracker peer string.
+func DecodeCompactPeers(blob []byte) ([]Endpoint, error) {
+	const compactPeerSize = 6
+	if len(blob)%compactPeerSize != 0 {
+		return nil, fmt.Errorf("compact peer list length %d is invalid", len(blob))
+	}
+
+	peers := make([]Endpoint, 0, len(blob)/compactPeerSize)
+	for idx := 0; idx < len(blob); idx += compactPeerSize {
+		peers = append(peers, Endpoint{
+			Address: net.IP(blob[idx : idx+4]),
+			Port:    uint16(blob[idx+4])<<8 | uint16(blob[idx+5]),
+		})
+	}
+	return peers, nil
+}
