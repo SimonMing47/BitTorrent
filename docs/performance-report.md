@@ -348,7 +348,31 @@ flowchart TD
 
 这是当前仓最平衡的一组默认值。
 
-### 9.2 更强调完整性时
+### 9.2 不兼容公网 peer 时
+
+如果你明确是内网 swarm，peer 端完全由你控制，可以直接试：
+
+```bash
+BTCLIENT_BLOCK_SIZE=32768 \
+BTCLIENT_PIPELINE_DEPTH=32 \
+BTCLIENT_AUDIT_PIECES=32 \
+BTCLIENT_REPAIR_ROUNDS=3 \
+./btclient -i /data/job/input.torrent -o /data/output
+```
+
+这组值的核心思路是：
+
+- 把 block 从 `16 KiB` 提到 `32 KiB`
+- 同时把 pipeline 从 `64` 收到 `32`
+- 保持每 peer 在途字节数仍约为 `1 MiB`
+
+它更适合：
+
+- 私有数据中心 swarm
+- 自控 peer 实现
+- 想降低协议消息数量
+
+### 9.3 更强调完整性时
 
 直接打开：
 
@@ -362,7 +386,7 @@ BTCLIENT_VERIFY_PIECES=1 ./btclient -i /data/job/input.torrent -o /data/output
 - 初次接入新 peer 池
 - 不确定数据源可信度时
 
-### 9.3 更强调吞吐时
+### 9.4 更强调吞吐时
 
 优先调：
 
@@ -379,7 +403,7 @@ BTCLIENT_BLOCK_SIZE
 原因是：
 
 - 更深 pipeline 在真实网络里更可能带来收益
-- 更大的 block 会更快触碰 peer 兼容性和丢包恢复边界
+- 更大的 block 会更快触碰丢包恢复和调度粒度边界
 
 ---
 
