@@ -40,6 +40,7 @@
 - [✨ 项目定位](#-项目定位)
 - [🎯 一眼看懂](#-一眼看懂)
 - [🚀 快速开始](#-快速开始)
+- [🛠️ 统一配置](#️-统一配置)
 - [🧩 功能一览](#-功能一览)
 - [🏗️ 架构总览](#️-架构总览)
 - [⚡ 数据中心模式](#-数据中心模式)
@@ -138,13 +139,150 @@ go build -o btclient ./cmd/btclient
 ./btclient -i /data/job/input.torrent -o /data/output -tls-path /data/certs/tracker.pem
 ```
 
-### 4. 命令行参数
+### 4. 配置入口
 
-| 参数 | 含义 | 必填 |
+所有可变配置都统一放在下一节 [🛠️ 统一配置](#️-统一配置)。
+
+## 🛠️ 统一配置
+
+这一节是当前仓所有可调项的唯一总入口。  
+如果你要改运行行为，优先看这里。
+
+### 1. 命令行参数
+
+| 参数 | 默认值 | 作用 | 影响 |
+| --- | --- | --- | --- |
+| `-i` | 无 | 输入 `.torrent` 文件路径 | 决定要下载哪个任务 |
+| `-o` | 无 | 输出根路径 | 最终文件名和相对子路径来自 torrent `name` |
+| `-tls-path` | 空 | HTTPS tracker 使用的 PEM 证书路径 | 传入后走安全 tracker 模式；不传时只走非 TLS tracker |
+
+### 2. 环境变量
+
+| 变量 | 默认值 | 何时生效 | 应该怎么调 | 影响 |
+| --- | --- | --- | --- | --- |
+| `BTCLIENT_BLOCK_SIZE` | `16384` | 始终 | 公网兼容场景保留 `16384`；内网 swarm 可先试 `32768`，再决定是否到 `65536` | 单个 request 的 block 大小。越大消息数越少，但重传粒度更粗 |
+| `BTCLIENT_PIPELINE_DEPTH` | `64` | 始终 | 先调它，再动 block。常见可试 `32`、`48`、`64`、`96` | 每个 peer 允许的在途请求数。越大越容易吃满链路，但调度开销也会上升 |
+| `BTCLIENT_AUDIT_PIECES` | `32` | `BTCLIENT_VERIFY_PIECES` 关闭时 | 想提高默认核验覆盖面就调大，例如 `48` 或 `64` | 下载完成后的抽样校验数量。越大越保守，收尾成本越高 |
+| `BTCLIENT_REPAIR_ROUNDS` | `3` | 抽样失败后 | 通常保留默认；坏 peer 较多时可调到 `4` 或 `5` | 自动修复轮数。只在异常任务里触发 |
+| `BTCLIENT_VERIFY_PIECES` | 关闭 | 显式设为 `1/true/yes/on` 时 | 更强调完整性就打开 | 打开后每个 piece 在写盘前都做 SHA-1，全量严格模式；此时 `BTCLIENT_AUDIT_PIECES` 不再参与主路径 |
+
+### 3. 一个关键公式
+
+真正需要盯住的，不是孤立的 `block size` 或 `pipeline depth`，而是：
+
+```text
+每个 peer 的在途字节数 = BTCLIENT_BLOCK_SIZE * BTCLIENT_PIPELINE_DEPTH
+```
+
+几个常见等价组合：
+
+| 组合 | 每 peer 在途字节数 | 适用理解 |
+| --- | ---: | --- |
+| `16384 * 64` | `1 MiB` | 当前默认值 |
+| `32768 * 32` | `1 MiB` | 内网 swarm 常见第一步 |
+| `65536 * 16` | `1 MiB` | 更激进，但重传粒度更粗 |
+
+### 4. 推荐配置模板
+
+#### A. 默认平衡档
+
+适合：
+
+- 当前仓默认场景
+- 想保留较强兼容性
+- 想先稳定跑通
+
+```bash
+./btclient \
+  -i /data/job/input.torrent \
+  -o /data/output
+```
+
+它等价于：
+
+```bash
+# default profile
+BTCLIENT_BLOCK_SIZE=16384 \
+BTCLIENT_PIPELINE_DEPTH=64 \
+BTCLIENT_AUDIT_PIECES=32 \
+BTCLIENT_REPAIR_ROUNDS=3 \
+./btclient -i /data/job/input.torrent -o /data/output
+```
+
+#### B. 内网数据中心加速档
+
+适合：
+
+- 不需要兼容公网 peer
+- peer 端实现由你控制
+- 更关心吞吐和消息开销
+
+```bash
+# private datacenter profile
+# 32 KiB block: 降低 request/piece 消息数
+# pipeline 32: 保持每 peer 在途字节约 1 MiB
+BTCLIENT_BLOCK_SIZE=32768 \
+BTCLIENT_PIPELINE_DEPTH=32 \
+BTCLIENT_AUDIT_PIECES=32 \
+BTCLIENT_REPAIR_ROUNDS=3 \
+./btclient -i /data/job/input.torrent -o /data/output
+```
+
+这组值的核心思想是：
+
+- 不再把 `16384` 当成唯一合理值
+- 先把 block 提到 `32768`
+- 再把 pipeline 收到 `32`
+- 保持总体在途字节量不失控
+
+如果你确认 peer 侧实现完全能接受更大的 request，再试：
+
+```bash
+# more aggressive internal profile
+BTCLIENT_BLOCK_SIZE=65536 \
+BTCLIENT_PIPELINE_DEPTH=16 \
+BTCLIENT_AUDIT_PIECES=32 \
+BTCLIENT_REPAIR_ROUNDS=3 \
+./btclient -i /data/job/input.torrent -o /data/output
+```
+
+但这一步的代价要清楚：
+
+- 单个 block 更大
+- 丢包时重传单位更大
+- 慢 peer 一次会占住更多有用带宽
+
+所以 `65536` 更适合“完全内网、自控 peer、已做过压力验证”的场景。
+
+#### C. 完整性优先档
+
+适合：
+
+- 审计任务
+- 首次接入新 peer 池
+- 你更在意“尽早发现坏片”
+
+```bash
+# integrity-first profile
+BTCLIENT_VERIFY_PIECES=1 \
+BTCLIENT_BLOCK_SIZE=16384 \
+BTCLIENT_PIPELINE_DEPTH=64 \
+./btclient -i /data/job/input.torrent -o /data/output
+```
+
+这个档位下的含义是：
+
+- 每个 piece 写盘前都做 SHA-1
+- `BTCLIENT_AUDIT_PIECES` 不再是主路径重点
+- 吞吐通常会比默认快路径更低，但错误会更早被发现
+
+### 5. 不可配置但必须知道的边界
+
+| 项目 | 是否可改 | 说明 |
 | --- | --- | --- |
-| `-i` | 输入 `.torrent` 文件路径 | 是 |
-| `-o` | 输出根路径 | 是 |
-| `-tls-path` | HTTPS tracker 使用的 PEM 证书路径 | 否 |
+| torrent `piece size` | 否 | 由制种阶段写入 `.torrent`，下载端不能改 |
+| 最终文件名 | 否 | 来自 torrent `name`，不是 `-o` 直接指定 |
+| tracker TLS 开关 | 间接可改 | 由是否传 `-tls-path` 决定 |
 
 ## 🧩 功能一览
 
@@ -270,29 +408,29 @@ flowchart LR
    - 由下载端决定
    - 会影响单个 `request` 请求多少字节
 
-当前实现没有继续默认放大 request block，而是优先扩大在途窗口。原因是:
+当前默认值没有直接把 request block 放大到更高，是因为默认 README 仍然保留一套更稳妥的起步配置。  
+但如果你明确是内网 swarm、`不用兼容公网 peer`，那么推荐直接看上一节 [🛠️ 统一配置](#️-统一配置) 里的“内网数据中心加速档”，优先从：
 
-- 在高质量网络下，更大的在途字节量通常比单块更大更有效
-- 在有少量丢包时，较小 block 更容易控制重传影响
-- 对更多 peer 来说，`16 KiB` 是更保守、兼容性更好的选择
+- `BTCLIENT_BLOCK_SIZE=32768`
+- `BTCLIENT_PIPELINE_DEPTH=32`
 
-### 3. 可调参数
+开始试。
 
-```bash
-BTCLIENT_PIPELINE_DEPTH=96 \
-BTCLIENT_BLOCK_SIZE=16384 \
-BTCLIENT_AUDIT_PIECES=48 \
-BTCLIENT_REPAIR_ROUNDS=4 \
-./btclient -i /data/job/input.torrent -o /data/output
-```
+### 3. 调参顺序建议
 
-| 环境变量 | 作用 | 默认思路 |
-| --- | --- | --- |
-| `BTCLIENT_PIPELINE_DEPTH` | 每个 peer 的在途请求数 | 数据中心里优先调它 |
-| `BTCLIENT_BLOCK_SIZE` | 单个 request 的 block 大小 | 默认保守，不建议激进放大 |
-| `BTCLIENT_AUDIT_PIECES` | 下载后抽样校验数量 | 平衡核验覆盖和收尾成本 |
-| `BTCLIENT_REPAIR_ROUNDS` | 自动修复轮数 | 正常快路径无额外成本 |
-| `BTCLIENT_VERIFY_PIECES` | 是否打开全量逐 piece 校验 | 更强调完整性时开启 |
+建议按这个顺序调：
+
+1. 先决定你是“默认平衡档”还是“内网数据中心加速档”
+2. 再围绕“每 peer 在途字节数”去搭配 `BLOCK_SIZE * PIPELINE_DEPTH`
+3. 然后再决定要不要提高 `AUDIT_PIECES`
+4. 最后才考虑是否打开 `BTCLIENT_VERIFY_PIECES=1`
+
+最常见的误区是：
+
+- 只把 `BTCLIENT_BLOCK_SIZE` 拉大
+- 但不同时回收 `BTCLIENT_PIPELINE_DEPTH`
+
+这样会让在途字节数膨胀得太快。
 
 ## 🛡️ 可靠性兜底
 
