@@ -81,44 +81,6 @@ func TestAnnounce(t *testing.T) {
 	}
 }
 
-func TestAnnounceHTTPSWithSkipVerify(t *testing.T) {
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		payload, err := bencode.Marshal(map[string]any{
-			"interval": int64(45),
-			"peers": []byte{
-				127, 0, 0, 1, 0x1A, 0xE1,
-			},
-		})
-		if err != nil {
-			t.Fatalf("Marshal() error = %v", err)
-		}
-		_, _ = w.Write(payload)
-	}))
-	defer server.Close()
-
-	client, err := NewWithOptions(Options{
-		Timeout:       time.Second,
-		SkipTLSVerify: true,
-	})
-	if err != nil {
-		t.Fatalf("NewWithOptions() error = %v", err)
-	}
-
-	reply, err := client.Announce(context.Background(), server.URL, AnnounceRequest{
-		InfoHash: [20]byte{1, 2, 3},
-		PeerID:   [20]byte{4, 5, 6},
-		Port:     6881,
-		Left:     42,
-		Compact:  true,
-	})
-	if err != nil {
-		t.Fatalf("Announce() error = %v", err)
-	}
-	if len(reply.Peers) != 1 {
-		t.Fatalf("unexpected peer count: %d", len(reply.Peers))
-	}
-}
-
 func TestAnnounceHTTPSWithCertificate(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		payload, err := bencode.Marshal(map[string]any{
@@ -147,8 +109,8 @@ func TestAnnounceHTTPSWithCertificate(t *testing.T) {
 	}
 
 	client, err := NewWithOptions(Options{
-		Timeout:         time.Second,
-		CertificatePath: certificatePath,
+		Timeout: time.Second,
+		TLSPath: certificatePath,
 	})
 	if err != nil {
 		t.Fatalf("NewWithOptions() error = %v", err)
@@ -176,7 +138,7 @@ func TestNewWithOptionsRejectsInvalidCertificate(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	if _, err := NewWithOptions(Options{CertificatePath: path}); err == nil {
+	if _, err := NewWithOptions(Options{TLSPath: path}); err == nil {
 		t.Fatal("expected invalid certificate to fail")
 	}
 }

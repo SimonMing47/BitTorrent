@@ -21,31 +21,19 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("bt", flag.ContinueOnError)
+	fs := flag.NewFlagSet("btclient", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 
-	torrentPath := fs.String("torrent", "", "path to the .torrent file")
-	outputPath := fs.String("out", "", "path to the output file")
-	port := fs.Uint("port", defaultAnnouncePort, "tracker port to announce")
-	trackerCert := fs.String("tracker-cert", "", "path to a PEM certificate used for HTTPS tracker requests")
-	trackerSkipVerify := fs.Bool("tracker-skip-verify", false, "skip TLS verification for HTTPS tracker requests")
-	quiet := fs.Bool("quiet", false, "suppress progress logging")
+	torrentPath := fs.String("i", "", "种子文件路径")
+	outputPath := fs.String("o", "", "下载输出文件路径")
+	tlsPath := fs.String("tls-path", "", "tracker 安全模式证书路径")
 
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 
 	if *torrentPath == "" || *outputPath == "" {
-		rest := fs.Args()
-		if len(rest) == 2 {
-			*torrentPath = rest[0]
-			*outputPath = rest[1]
-		}
-	}
-
-	if *torrentPath == "" || *outputPath == "" {
-		fmt.Fprintln(stderr, "usage: bt -torrent input.torrent -out output.file")
-		fmt.Fprintln(stderr, "   or: bt input.torrent output.file")
+		fmt.Fprintln(stderr, "用法: btclient -i input.torrent -o output.file [-tls-path cert.pem]")
 		return 2
 	}
 
@@ -53,15 +41,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 		context.Background(),
 		*torrentPath,
 		*outputPath,
-		uint16(*port),
+		uint16(defaultAnnouncePort),
 		discovery.Options{
-			CertificatePath: *trackerCert,
-			SkipTLSVerify:   *trackerSkipVerify,
+			TLSPath: *tlsPath,
 		},
-		*quiet,
 		stdout,
 	); err != nil {
-		fmt.Fprintf(stderr, "download failed: %v\n", err)
+		fmt.Fprintf(stderr, "下载失败: %v\n", err)
 		return 1
 	}
 	return 0
@@ -72,7 +58,6 @@ func execute(
 	torrentPath, outputPath string,
 	port uint16,
 	trackerOptions discovery.Options,
-	quiet bool,
 	logWriter io.Writer,
 ) error {
 	meta, err := manifest.Load(torrentPath)
@@ -100,11 +85,8 @@ func execute(
 		return err
 	}
 
-	logger := log.New(io.Discard, "", log.LstdFlags)
-	if !quiet {
-		logger = log.New(logWriter, "", log.LstdFlags)
-		logger.Printf("tracker returned %d peer(s)", len(reply.Peers))
-	}
+	logger := log.New(logWriter, "", log.LstdFlags)
+	logger.Printf("tracker 返回 %d 个 peer", len(reply.Peers))
 
 	manager := engine.New(meta, reply.Peers, peerID, logger, engine.Settings{})
 	return manager.Save(ctx, outputPath)

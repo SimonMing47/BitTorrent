@@ -25,16 +25,15 @@
 
 同时，本仓新增了原仓没有的 tracker HTTPS/TLS 能力：
 
-- 对 HTTPS tracker 指定 PEM 证书
-- 对 HTTPS tracker 跳过 TLS 校验
-- 在 tracker 连接层显式区分 TCP 拨号和 TLS 拨号
+- 通过 `-tls-path` 指定 PEM 证书
+- 在 tracker 连接层显式区分普通模式和 TLS 安全模式
 
 ## 2. 原仓目录与本仓目录的整体映射
 
 | 原仓模块 | 原仓职责 | 本仓对应模块 | 对应说明 |
 | --- | --- | --- | --- |
-| `main.go` | CLI 入口，读取参数并触发下载 | `cmd/riptide/entry.go` | 都是入口，但参数组织和命名体系不同 |
-| `torrentfile` | `.torrent` 解析、tracker 请求、下载入口 | `internal/manifest` + `internal/discovery` + `cmd/riptide` | 本仓把元数据、tracker、CLI 拆开了 |
+| `main.go` | CLI 入口，读取参数并触发下载 | `cmd/btclient/entry.go` | 都是入口，但参数组织和命名体系不同 |
+| `torrentfile` | `.torrent` 解析、tracker 请求、下载入口 | `internal/manifest` + `internal/discovery` + `cmd/btclient` | 本仓把元数据、tracker、CLI 拆开了 |
 | `peers` | compact peer 列表解码 | `internal/discovery` | 本仓把 peer 地址解码放到 tracker 发现层 |
 | `handshake` | BitTorrent 握手编解码 | `internal/peerwire/hello.go` | 功能对应，但文件名和对象命名不同 |
 | `message` | peer 消息编解码 | `internal/peerwire/frames.go` | 功能对应，但改成统一的 `Packet` 视角 |
@@ -48,7 +47,7 @@
 
 | 原仓文件 | 原仓作用 | 本仓文件 | 本仓作用 | 差异 |
 | --- | --- | --- | --- | --- |
-| `main.go` | 从命令行拿输入、输出路径并调用下载 | `cmd/riptide/entry.go` | 解析命令行、构造 tracker 选项、启动下载 | 本仓增加了 `--tracker-cert` 和 `--tracker-skip-verify` |
+| `main.go` | 从命令行拿输入、输出路径并调用下载 | `cmd/btclient/entry.go` | 解析命令行、构造 tracker 选项、启动下载 | 本仓改成 `-i`、`-o`、`-tls-path` 这 3 个参数 |
 
 ### 3.2 torrent 元数据层
 
@@ -145,7 +144,7 @@
 对应关系：
 
 - 功能一一对应
-- 本仓额外支持 HTTPS tracker 的 TLS 选项
+- 本仓额外支持通过证书切换到 tracker 安全模式
 
 ### 4.4 解析 compact peers
 
@@ -246,15 +245,14 @@
 本仓新增：
 
 - `discovery.Options`
-- `--tracker-cert`
-- `--tracker-skip-verify`
+- `-tls-path`
 
 具体行为：
 
-- 无证书、无 skip verify
-  - 使用普通 TCP 拨号
-- 有证书，或开启 skip verify
-  - 使用 TLS 拨号
+- 没有传证书
+  - 使用普通模式请求 tracker
+- 传入证书
+  - 使用 TLS 安全模式请求 tracker
 
 这是参考仓没有的功能。
 

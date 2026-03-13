@@ -10,9 +10,7 @@
 - 解析单文件 torrent 的 `announce`、`info`、`piece length`、`pieces`、`length`、`name`
 - 计算 `info_hash`
 - 向 HTTP tracker 发起 announce 请求
-- 向 HTTPS tracker 发起 announce 请求
-- 为 HTTPS tracker 指定 PEM 证书
-- 为 HTTPS tracker 跳过 TLS 校验
+- 在传入证书时以安全模式向 tracker 发起请求
 - 解析 compact peers 列表
 - 与 peer 建立 TCP 连接
 - 完成 BitTorrent 握手
@@ -33,7 +31,7 @@
 
 ## 2. 一次完整下载在做什么
 
-命令行入口位于 [entry.go](/Users/mac/projects/bt-refractor/cmd/riptide/entry.go)。一次下载的完整流程如下：
+命令行入口位于 [entry.go](/Users/mac/projects/bt-refractor/cmd/btclient/entry.go)。一次下载的完整流程如下：
 
 1. 读取 `.torrent` 文件。
 2. 在 `internal/manifest` 中把 bencode 元数据解析成 `Manifest`。
@@ -52,7 +50,7 @@
 
 ## 3. 仓库结构
 
-- `cmd/riptide`
+- `cmd/btclient`
   - 命令行入口，负责参数解析、组装下载流程。
 - `internal/bencode`
   - 最小化 bencode 编解码器。
@@ -131,23 +129,23 @@
 - `DecodeCompactPeers`
   - 解析 tracker 的 compact peer 格式
 - `NewWithOptions`
-  - 为 HTTP / HTTPS tracker 构造不同的连接策略
+  - 为普通模式和安全模式构造不同的 tracker 连接策略
 
-这里支持三种 tracker 访问模式：
+这里支持两种 tracker 访问模式：
 
-1. 默认模式
-   - 走普通 `net.Dialer` / `DialContext`
-2. 传入证书
-   - 构造 `tls.Config`，把 PEM 证书加入信任池，再走 TLS 拨号
-3. 显式跳过校验
-   - 打开 `InsecureSkipVerify`，再走 TLS 拨号
+1. 普通模式
+   - 没有传 `-tls-path`
+   - 使用普通拨号方式请求 tracker
+2. 安全模式
+   - 传入 `-tls-path`
+   - 读取 PEM 证书，构造 `tls.Config`，再走 TLS 拨号
 
 也就是说，当前实现里：
 
-- 没有证书、也没有开启 `skip verify`
-  - 使用普通 TCP 拨号
-- 有证书，或者显式要求跳过校验
-  - 使用 TLS 拨号访问 HTTPS tracker
+- 没有证书
+  - 走普通模式请求 tracker
+- 传入证书
+  - 走安全模式请求 tracker
 
 ### 4.4 `internal/peerwire`
 
@@ -342,27 +340,25 @@ BitTorrent 握手格式如下：
 - 写盘前一定做 piece 校验
 - 单个 peer 出问题时，piece 可以回退给其他 peer 继续尝试
 
-### 5.8 HTTPS tracker 的 TLS 细节
+### 5.8 tracker 安全模式的 TLS 细节
 
 这是本仓库相对参考仓新增的一部分。
 
-当使用 HTTPS tracker 时，本仓支持两种额外能力：
+当前命令行只暴露一个和 TLS 相关的参数：
 
-- `--tracker-cert`
-  - 从 PEM 文件中加载额外信任证书
-- `--tracker-skip-verify`
-  - 显式跳过服务端证书校验
+- `-tls-path`
+  - 从 PEM 文件中加载 tracker 安全模式所需的证书
 
 实现策略如下：
 
-- 如果没有证书，且没有要求跳过校验
-  - 使用普通 TCP 拨号策略
-- 如果传入证书，或者显式要求跳过校验
-  - 使用 TLS 拨号策略
+- 如果没有传 `-tls-path`
+  - 使用普通模式请求 tracker
+- 如果传入 `-tls-path`
+  - 使用 TLS 拨号策略请求 tracker
 
 这样做的目的，是把 tracker 访问和 peer 下载链路分开处理：
 
-- tracker 访问支持更灵活的 TLS 连接
+- tracker 访问支持基于证书的安全请求
 - peer 下载仍保持当前版本的简洁 TCP 模型
 
 ## 6. 与原仓的详细对照
@@ -379,36 +375,21 @@ BitTorrent 握手格式如下：
 基础用法：
 
 ```bash
-go run ./cmd/riptide --torrent path/to/file.torrent --out path/to/output.bin
+go run ./cmd/btclient -i path/to/file.torrent -o path/to/output.bin
 ```
 
-也支持位置参数：
+对 tracker 启用安全模式并指定证书：
 
 ```bash
-go run ./cmd/riptide path/to/file.torrent path/to/output.bin
-```
-
-对 HTTPS tracker 指定证书：
-
-```bash
-go run ./cmd/riptide \
-  --torrent path/to/file.torrent \
-  --out path/to/output.bin \
-  --tracker-cert path/to/tracker.pem
-```
-
-对 HTTPS tracker 跳过 TLS 校验：
-
-```bash
-go run ./cmd/riptide \
-  --torrent path/to/file.torrent \
-  --out path/to/output.bin \
-  --tracker-skip-verify
+go run ./cmd/btclient \
+  -i path/to/file.torrent \
+  -o path/to/output.bin \
+  -tls-path path/to/tracker.pem
 ```
 
 ## 8. 验证方式
 
 ```bash
 go test -count=1 ./...
-go build ./cmd/riptide
+go build ./cmd/btclient
 ```

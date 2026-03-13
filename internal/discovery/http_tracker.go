@@ -44,9 +44,8 @@ type AnnounceReply struct {
 
 // Options 控制 tracker 的 HTTP/HTTPS 连接建立方式。
 type Options struct {
-	Timeout         time.Duration
-	CertificatePath string
-	SkipTLSVerify   bool
+	Timeout time.Duration
+	TLSPath string
 }
 
 // HTTPClient 负责向 HTTP 或 HTTPS tracker 发起 announce 请求。
@@ -183,7 +182,7 @@ func newHTTPClient(options Options) (*http.Client, error) {
 		DialContext: dialContext,
 	}
 
-	if options.CertificatePath != "" || options.SkipTLSVerify {
+	if options.TLSPath != "" {
 		tlsConfig, err := buildTLSConfig(options)
 		if err != nil {
 			return nil, err
@@ -215,17 +214,16 @@ func newHTTPClient(options Options) (*http.Client, error) {
 
 func buildTLSConfig(options Options) (*tls.Config, error) {
 	config := &tls.Config{
-		InsecureSkipVerify: options.SkipTLSVerify,
-		MinVersion:         tls.VersionTLS12,
+		MinVersion: tls.VersionTLS12,
 	}
 
-	if options.CertificatePath == "" {
+	if options.TLSPath == "" {
 		return config, nil
 	}
 
-	pemData, err := os.ReadFile(options.CertificatePath)
+	pemData, err := os.ReadFile(options.TLSPath)
 	if err != nil {
-		return nil, fmt.Errorf("read tracker certificate: %w", err)
+		return nil, fmt.Errorf("读取 tracker 证书失败: %w", err)
 	}
 
 	pool, err := x509.SystemCertPool()
@@ -233,7 +231,7 @@ func buildTLSConfig(options Options) (*tls.Config, error) {
 		pool = x509.NewCertPool()
 	}
 	if !pool.AppendCertsFromPEM(pemData) {
-		return nil, fmt.Errorf("tracker certificate %q is not valid PEM", options.CertificatePath)
+		return nil, fmt.Errorf("tracker 证书 %q 不是合法 PEM", options.TLSPath)
 	}
 	config.RootCAs = pool
 	return config, nil

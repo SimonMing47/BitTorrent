@@ -114,7 +114,7 @@
 
 更细一点是：
 
-1. `cmd/riptide` 读取命令行参数
+1. `cmd/btclient` 读取命令行参数
 2. `manifest.Load` 解析 `.torrent`
 3. `discovery.HTTPClient.Announce` 找到 peers
 4. `engine.Manager.Save` 为 peers 启动 worker
@@ -221,21 +221,22 @@ len(pieces) / 20
 - 没有 `peers`
   - 报错
 
-### 5.3 HTTPS tracker
+### 5.3 tracker 安全模式
 
-当前实现支持 HTTPS tracker，并且支持两类额外控制：
+当前实现支持通过证书进入 tracker 安全模式。
 
-- 指定证书文件
-- 跳过 TLS 校验
+命令行参数为：
+
+- `-tls-path`
 
 这部分是通过自定义 `http.Transport` 完成的。
 
 具体分支如下：
 
-- 未配置证书，且未开启跳过校验
-  - 使用普通 TCP 拨号
-- 配置了证书，或开启了跳过校验
-  - 使用 TLS 拨号
+- 未配置证书
+  - 使用普通模式请求 tracker
+- 配置了证书
+  - 使用 TLS 拨号请求 tracker
 
 ## 6. peer 握手协议细节
 
