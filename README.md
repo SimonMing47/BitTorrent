@@ -2,6 +2,8 @@
 
 `bt-refractor` 是一个用 Go 从零重写的 BitTorrent 单文件下载客户端。它的目标不是复刻 [veggiedefender/torrent-client](https://github.com/veggiedefender/torrent-client) 的目录结构或命名方式，而是在保持功能覆盖不缺失的前提下，建立一套新的工程组织、数据模型和下载流程。
 
+当前命令行二进制名为 `btclient`。
+
 ## 1. 这个库现在能做什么
 
 当前已经支持：
@@ -20,6 +22,17 @@
 - 按 block 请求 piece 数据
 - 校验 piece 的 SHA-1
 - 将校验通过的 piece 直接写入目标文件
+
+命令行参数约定如下：
+
+- `-i`
+  - 传入 `.torrent` 种子文件路径
+- `-o`
+  - 传入输出目录路径，不包含文件名
+- `-tls-path`
+  - 传入 tracker 安全模式证书路径
+
+最终输出文件名会自动使用种子里的 `name` 字段。
 
 当前明确不支持：
 
@@ -375,7 +388,7 @@ BitTorrent 握手格式如下：
 基础用法：
 
 ```bash
-go run ./cmd/btclient -i path/to/file.torrent -o path/to/output.bin
+go run ./cmd/btclient -i path/to/file.torrent -o /path/to/output-dir
 ```
 
 对 tracker 启用安全模式并指定证书：
@@ -383,7 +396,7 @@ go run ./cmd/btclient -i path/to/file.torrent -o path/to/output.bin
 ```bash
 go run ./cmd/btclient \
   -i path/to/file.torrent \
-  -o path/to/output.bin \
+  -o /path/to/output-dir \
   -tls-path path/to/tracker.pem
 ```
 

@@ -47,7 +47,7 @@
 
 | 原仓文件 | 原仓作用 | 本仓文件 | 本仓作用 | 差异 |
 | --- | --- | --- | --- | --- |
-| `main.go` | 从命令行拿输入、输出路径并调用下载 | `cmd/btclient/entry.go` | 解析命令行、构造 tracker 选项、启动下载 | 本仓改成 `-i`、`-o`、`-tls-path` 这 3 个参数 |
+| `main.go` | 从命令行拿输入、输出路径并调用下载 | `cmd/btclient/entry.go` | 解析命令行、构造 tracker 选项、启动下载 | 本仓改成 `-i`、`-o`、`-tls-path` 这 3 个参数，其中 `-o` 是输出目录 |
 
 ### 3.2 torrent 元数据层
 
@@ -65,7 +65,7 @@
 | `torrentfile/tracker.go` | 组装 announce URL、发请求、解析 tracker 响应 | `internal/discovery/http_tracker.go` | 组装 announce URL、发请求、解析 tracker 响应 | 本仓增加 HTTPS/TLS 连接控制 |
 | `buildTrackerURL` | 生成 announce URL | `BuildURL` | 生成 announce URL | 功能对应 |
 | `requestPeers` | 请求 tracker 并拿到 peers | `HTTPClient.Announce` | 请求 tracker 并解析成 `AnnounceReply` | 本仓把返回结果包装成更明确的结构 |
-| 无 | 无 | `NewWithOptions` | 构造支持 TLS 证书/跳过校验的客户端 | 原仓没有这一层 |
+| 无 | 无 | `NewWithOptions` | 构造支持证书安全模式的 tracker 客户端 | 原仓没有这一层 |
 
 ### 3.4 peer 地址层
 
@@ -256,7 +256,20 @@
 
 这是参考仓没有的功能。
 
-## 6. 为什么说它不是按原仓平移
+## 6. 当前命令行行为
+
+当前二进制名为 `btclient`，参数语义如下：
+
+- `-i`
+  - 种子文件路径
+- `-o`
+  - 输出目录路径，不包含文件名
+- `-tls-path`
+  - tracker 安全模式证书路径
+
+当 `-o` 只传目录时，本仓会自动使用 torrent 元数据里的 `name` 作为最终输出文件名。
+
+## 7. 为什么说它不是按原仓平移
 
 原因不只是名字变了，而是工程边界也变了：
 

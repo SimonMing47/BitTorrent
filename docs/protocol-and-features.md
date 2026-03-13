@@ -13,11 +13,13 @@
 它的输入是：
 
 - 一个 `.torrent` 文件
-- 一个输出文件路径
+- 一个输出目录路径
 
 它的输出是：
 
 - 下载并校验后的目标文件
+
+最终输出文件名不是由命令行直接给定，而是自动使用 torrent 元数据里的 `name` 字段。
 
 它当前覆盖的是最小可用下载闭环：
 
@@ -116,8 +118,9 @@
 
 1. `cmd/btclient` 读取命令行参数
 2. `manifest.Load` 解析 `.torrent`
-3. `discovery.HTTPClient.Announce` 找到 peers
-4. `engine.Manager.Save` 为 peers 启动 worker
+3. 入口层根据 `-o` 目录和 torrent 的 `name` 组装最终输出文件路径
+4. `discovery.HTTPClient.Announce` 找到 peers
+5. `engine.Manager.Save` 为 peers 启动 worker
 5. `engine.establishSession` 完成握手和 bitfield 读取
 6. `peerSession.FetchPiece` 按块请求数据
 7. `Manager.runPeer` 对 piece 做校验并写盘

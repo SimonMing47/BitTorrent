@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"path/filepath"
 
 	"github.com/mac/bt-refractor/internal/discovery"
 	"github.com/mac/bt-refractor/internal/engine"
@@ -25,22 +26,22 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 
 	torrentPath := fs.String("i", "", "种子文件路径")
-	outputPath := fs.String("o", "", "下载输出文件路径")
+	outputDir := fs.String("o", "", "下载输出目录路径")
 	tlsPath := fs.String("tls-path", "", "tracker 安全模式证书路径")
 
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 
-	if *torrentPath == "" || *outputPath == "" {
-		fmt.Fprintln(stderr, "用法: btclient -i input.torrent -o output.file [-tls-path cert.pem]")
+	if *torrentPath == "" || *outputDir == "" {
+		fmt.Fprintln(stderr, "用法: btclient -i input.torrent -o output.dir [-tls-path cert.pem]")
 		return 2
 	}
 
 	if err := execute(
 		context.Background(),
 		*torrentPath,
-		*outputPath,
+		*outputDir,
 		uint16(defaultAnnouncePort),
 		discovery.Options{
 			TLSPath: *tlsPath,
@@ -55,12 +56,17 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 func execute(
 	ctx context.Context,
-	torrentPath, outputPath string,
+	torrentPath, outputDir string,
 	port uint16,
 	trackerOptions discovery.Options,
 	logWriter io.Writer,
 ) error {
 	meta, err := manifest.Load(torrentPath)
+	if err != nil {
+		return err
+	}
+
+	outputPath, err := buildOutputPath(outputDir, meta.Name)
 	if err != nil {
 		return err
 	}
@@ -90,6 +96,17 @@ func execute(
 
 	manager := engine.New(meta, reply.Peers, peerID, logger, engine.Settings{})
 	return manager.Save(ctx, outputPath)
+}
+
+func buildOutputPath(outputDir, torrentName string) (string, error) {
+	fileName := filepath.Base(torrentName)
+	if fileName == "." || fileName == string(filepath.Separator) || fileName == "" {
+		return "", fmt.Errorf("种子中的文件名无效: %q", torrentName)
+	}
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+		return "", fmt.Errorf("创建输出目录失败: %w", err)
+	}
+	return filepath.Join(outputDir, fileName), nil
 }
 
 func generatePeerID() ([20]byte, error) {
