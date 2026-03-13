@@ -49,6 +49,7 @@
 - [🗂️ 仓库结构](#️-仓库结构)
 - [📡 协议速览](#-协议速览)
 - [🧪 测试与验证](#-测试与验证)
+- [📈 性能报告](#-性能报告)
 - [📖 深入阅读](#-深入阅读)
 - [❓ FAQ](#-faq)
 - [📄 License](#-license)
@@ -511,15 +512,36 @@ flowchart LR
 - 覆盖严格模式下载
 - 覆盖“快路径坏片 -> 抽样发现 -> 全量定位 -> 定向修复”的自动兜底路径
 
+### benchmark 覆盖
+
+- `performance_benchmark_test.go`
+  - 对比原始方案风格、严格大窗口、当前数据中心默认快路径
+  - 用于生成可重复的性能对比数据
+
 ### 常用验证命令
 
 ```bash
 go test -count=1 ./...
 go build -o btclient ./cmd/btclient
+go test -run '^$' -bench '^BenchmarkDownloadModes$' -benchmem -benchtime=2x -count=5 ./...
 ```
+
+## 📈 性能报告
+
+如果你关心：
+
+- 原始方案和当前方案的核心性能差异
+- 为什么当前仓更适合数据中心
+- 实测 benchmark 提升了多少
+- 快路径和可靠性之间是怎么折中的
+
+建议直接阅读：
+
+- [性能测试报告](docs/performance-report.md)
 
 ## 📖 深入阅读
 
+- [性能测试报告](docs/performance-report.md)
 - [与原始仓的详细功能对照](docs/compare-with-original.md)
 - [协议与功能详解](docs/protocol-and-features.md)
 - [4+1 架构视图](docs/architecture-views.md)

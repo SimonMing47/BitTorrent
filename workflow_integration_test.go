@@ -251,37 +251,38 @@ type peerBehavior struct {
 	CorruptPiece  bool
 	BitfieldDelay time.Duration
 	UnchokeDelay  time.Duration
+	ResponseDelay time.Duration
 }
 
-func servePeerLoop(t *testing.T, listener net.Listener, infoHash [20]byte, payload []byte, pieceLength int, behavior peerBehavior) {
-	t.Helper()
+func servePeerLoop(tb testing.TB, listener net.Listener, infoHash [20]byte, payload []byte, pieceLength int, behavior peerBehavior) {
+	tb.Helper()
 
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
 			return
 		}
-		go handlePeerConn(t, conn, infoHash, payload, pieceLength, behavior)
+		go handlePeerConn(tb, conn, infoHash, payload, pieceLength, behavior)
 	}
 }
 
-func handlePeerConn(t *testing.T, conn net.Conn, infoHash [20]byte, payload []byte, pieceLength int, behavior peerBehavior) {
-	t.Helper()
+func handlePeerConn(tb testing.TB, conn net.Conn, infoHash [20]byte, payload []byte, pieceLength int, behavior peerBehavior) {
+	tb.Helper()
 	defer conn.Close()
 
 	greeting, err := peerwire.ReadGreeting(conn)
 	if err != nil {
-		t.Errorf("ReadGreeting() error = %v", err)
+		tb.Errorf("ReadGreeting() error = %v", err)
 		return
 	}
 	if greeting.InfoHash != infoHash {
-		t.Errorf("unexpected info hash: %x", greeting.InfoHash)
+		tb.Errorf("unexpected info hash: %x", greeting.InfoHash)
 		return
 	}
 
 	remoteID := [20]byte{45, 70, 65, 75, 69, 45, 80, 69, 69, 82}
 	if _, err := conn.Write(peerwire.NewGreeting(infoHash, remoteID).Encode()); err != nil {
-		t.Errorf("Write(greeting) error = %v", err)
+		tb.Errorf("Write(greeting) error = %v", err)
 		return
 	}
 
@@ -294,7 +295,7 @@ func handlePeerConn(t *testing.T, conn net.Conn, infoHash [20]byte, payload []by
 		time.Sleep(behavior.BitfieldDelay)
 	}
 	if _, err := conn.Write(peerwire.Packet{Kind: peerwire.KindBitfield, Payload: bitfield}.Encode()); err != nil {
-		t.Errorf("Write(bitfield) error = %v", err)
+		tb.Errorf("Write(bitfield) error = %v", err)
 		return
 	}
 
@@ -313,13 +314,13 @@ func handlePeerConn(t *testing.T, conn net.Conn, infoHash [20]byte, payload []by
 				time.Sleep(behavior.UnchokeDelay)
 			}
 			if _, err := conn.Write(peerwire.Control(peerwire.KindUnchoke).Encode()); err != nil {
-				t.Errorf("Write(unchoke) error = %v", err)
+				tb.Errorf("Write(unchoke) error = %v", err)
 				return
 			}
 		case peerwire.KindRequest:
 			pieceIndex, begin, length, err := peerwire.ParseRequest(packet)
 			if err != nil {
-				t.Errorf("ParseRequest() error = %v", err)
+				tb.Errorf("ParseRequest() error = %v", err)
 				return
 			}
 			absolute := pieceIndex*pieceLength + begin
@@ -330,8 +331,11 @@ func handlePeerConn(t *testing.T, conn net.Conn, infoHash [20]byte, payload []by
 			if behavior.CorruptPiece && len(block) > 0 {
 				block[0] ^= 0xFF
 			}
+			if behavior.ResponseDelay > 0 {
+				time.Sleep(behavior.ResponseDelay)
+			}
 			if _, err := conn.Write(peerwire.PiecePacket(pieceIndex, begin, block).Encode()); err != nil {
-				t.Errorf("Write(piece) error = %v", err)
+				tb.Errorf("Write(piece) error = %v", err)
 				return
 			}
 		case peerwire.KindHave:
