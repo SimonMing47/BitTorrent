@@ -67,6 +67,7 @@ func TestRuntimeSettingsFromEnv(t *testing.T) {
 	t.Setenv("BTCLIENT_BLOCK_SIZE", "32768")
 	t.Setenv("BTCLIENT_PIPELINE_DEPTH", "96")
 	t.Setenv("BTCLIENT_AUDIT_PIECES", "24")
+	t.Setenv("BTCLIENT_REPAIR_ROUNDS", "5")
 
 	settings, err := runtimeSettingsFromEnv()
 	if err != nil {
@@ -80,6 +81,9 @@ func TestRuntimeSettingsFromEnv(t *testing.T) {
 	}
 	if settings.AuditPieces != 24 {
 		t.Fatalf("unexpected audit pieces: %d", settings.AuditPieces)
+	}
+	if settings.RepairRounds != 5 {
+		t.Fatalf("unexpected repair rounds: %d", settings.RepairRounds)
 	}
 }
 

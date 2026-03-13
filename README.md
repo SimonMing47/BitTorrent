@@ -156,7 +156,7 @@ flowchart LR
 
 ## 5. 数据中心默认策略
 
-当前实现默认按“可信网络、优先吞吐，但不完全放弃校验”的思路运行：
+当前实现默认按“机房网络可信、吞吐优先，但可靠性优先级高于纯速度”的思路运行：
 
 - 保持兼容性更好的 `16 KiB` request block
 - 提高了每个 peer 的 request pipeline 深度
@@ -164,6 +164,8 @@ flowchart LR
 - 把高频 piece 成功日志改成批量进度日志
 - 默认不在热路径上对每个 piece 做 SHA-1 校验
 - 默认在下载结束后对一组分布式抽样 piece 做校验
+- 抽样一旦发现异常，自动升级为全量校验并只重拉坏片
+- 升级修复时强制打开逐 piece SHA-1 校验，并直接淘汰返回坏片的 peer
 
 ```mermaid
 flowchart LR
@@ -176,14 +178,46 @@ flowchart LR
     F --> G["收尾做抽样校验"]
 ```
 
-这样做的目的，是把 CPU 和日志 IO 尽量让给真实下载流量，同时保留一层成本很低的落盘后核验。
+这样做的目的，是把 CPU 和日志 IO 尽量让给真实下载流量，但不是把可靠性完全让出去。当前仓默认走的是三层保障：
+
+1. 热路径尽量快
+   - 不在每个 piece 上做同步 SHA-1
+   - 让更多 CPU 时间留给 socket 收发和写盘
+2. 下载结束后先做低成本抽样
+   - 快速判断“快路径里有没有明显坏片”
+3. 只要抽样命中异常，就自动进入严格修复
+   - 全量扫描磁盘上的所有 piece
+   - 找出真正损坏的 piece 下标
+   - 只重拉坏片，不重下整文件
+   - 重拉阶段对每个 piece 强制做 SHA-1 校验
+   - 返回坏片的 peer 会被直接断开，不再继续消耗修复轮次
+
+```mermaid
+flowchart TD
+    A["快速下载路径"] --> B["文件落盘 + Sync"]
+    B --> C["抽样校验"]
+    C -->|"通过"| D["下载完成"]
+    C -->|"失败"| E["升级为全量校验"]
+    E --> F["定位坏片列表"]
+    F --> G["严格模式定向重拉坏片"]
+    G --> H["逐 piece SHA-1 校验"]
+    H -->|"通过"| D
+    H -->|"坏 peer / 坏片"| I["释放坏片并淘汰坏 peer"]
+    I --> G
+```
+
+这意味着当前仓的默认策略不是“发现坏了就失败”，而是“先快跑，发现异常后自动切回严格模式修复”。
 
 这里有一个边界要说明清楚：
 
 - torrent 的 `piece size` 是写死在 `.torrent` 元数据里的，下载端不能修改
 - 下载端真正能调的是 request block 大小和在途请求窗口
 
-当前默认没有把 request block 继续放大，是为了兼容更多 peer；真正的提速来自更大的在途窗口，而不是去修改 torrent 自带的 `piece size`。
+当前默认没有把 request block 继续放大，是为了兼容更多 peer；真正的提速来自更大的在途窗口，而不是去修改 torrent 自带的 `piece size`。在数据中心里即使网络质量好，也仍然可能遇到个别 peer 行为异常或链路抖动，所以默认继续保留更稳的 `16 KiB` block，把优化重点放在：
+
+- 更高的 pipeline 深度
+- 更低的热路径校验开销
+- 抽样失败后的严格修复链路
 
 如果你要在更强调完整性的环境里运行，可以显式打开全量 piece 校验：
 
@@ -194,8 +228,23 @@ BTCLIENT_VERIFY_PIECES=1 ./btclient -i /data/job/input.torrent -o /data/output
 如果你要继续手工调优数据中心吞吐，也可以通过环境变量调整：
 
 ```bash
-BTCLIENT_PIPELINE_DEPTH=96 BTCLIENT_BLOCK_SIZE=16384 BTCLIENT_AUDIT_PIECES=48 ./btclient -i /data/job/input.torrent -o /data/output
+BTCLIENT_PIPELINE_DEPTH=96 BTCLIENT_BLOCK_SIZE=16384 BTCLIENT_AUDIT_PIECES=48 BTCLIENT_REPAIR_ROUNDS=4 ./btclient -i /data/job/input.torrent -o /data/output
 ```
+
+其中：
+
+- `BTCLIENT_PIPELINE_DEPTH`
+  - 控制每个 peer 的在途请求数
+  - 是数据中心场景下最值得优先调的吞吐参数
+- `BTCLIENT_BLOCK_SIZE`
+  - 控制单个 `request` 的 block 大小
+  - 默认保持 `16 KiB`，优先兼容性和丢包下的稳定性
+- `BTCLIENT_AUDIT_PIECES`
+  - 控制下载完成后的抽样覆盖面
+  - 数值越大，抽样越保守
+- `BTCLIENT_REPAIR_ROUNDS`
+  - 控制自动修复轮数
+  - 只在抽样失败后触发，对正常快路径没有额外成本
 
 ## 6. 一次下载在做什么
 
@@ -225,7 +274,16 @@ sequenceDiagram
         Engine->>File: WriteAt(offset, block)
     end
     Engine->>File: Sync()
-    Engine->>Engine: 抽样校验或全量校验
+    Engine->>Engine: 抽样校验
+    alt 抽样通过
+        Engine-->>User: completed file
+    else 抽样失败
+        Engine->>Engine: 全量定位坏片
+        Engine->>Peer: 严格模式重拉坏片
+        Peer-->>Engine: piece
+        Engine->>Engine: 逐 piece SHA-1 校验
+        Engine-->>User: repaired file
+    end
 ```
 
 文字版步骤：
@@ -240,8 +298,10 @@ sequenceDiagram
 8. peer 返回 `piece` 后，客户端下载 block 并按偏移拼装
 9. 数据直接写入目标文件
 10. 默认情况下，下载结束后会对一组抽样 piece 做校验
-11. 如果启用了 `BTCLIENT_VERIFY_PIECES=1`，每个 piece 在写盘前会先做 SHA-1 校验
-12. 全部 piece 完成后，下载结束
+11. 如果抽样失败，系统会自动升级为全量校验，定位出坏片
+12. 坏片会在严格模式下被定向重拉，并逐 piece 做 SHA-1 校验
+13. 如果启用了 `BTCLIENT_VERIFY_PIECES=1`，则从一开始就对每个 piece 在写盘前做 SHA-1 校验
+14. 全部 piece 完成后，下载结束
 
 ## 7. 仓库结构
 
@@ -332,9 +392,11 @@ tracker 返回里当前只消费：
 - `internal/peerwire`
   - 握手帧、消息帧、bitfield 单元测试
 - `internal/engine`
-  - piece 调度、peer 会话、抽样校验单元测试
+  - piece 调度、peer 会话、抽样校验、坏片定位单元测试
 - `workflow_integration_test.go`
   - 本地 fake tracker + fake peer 的端到端测试
+  - 覆盖严格模式下载
+  - 覆盖“快路径坏片 -> 抽样发现 -> 全量定位 -> 定向修复”的自动兜底路径
 
 ## 10. 文档
 

@@ -67,6 +67,30 @@ func TestSelectAuditPieces(t *testing.T) {
 	}
 }
 
+func TestNewCatalogWithPending(t *testing.T) {
+	meta := manifest.Manifest{
+		TotalLength:         12,
+		StandardPieceLength: 4,
+		PieceDigests:        make([][20]byte, 3),
+	}
+
+	book := newCatalogWithPending(meta, []int{1})
+	bitmap := peerwire.Bitmap{0b1110_0000}
+
+	lease, ok, done := book.TryLease(bitmap, meta)
+	if !ok || done {
+		t.Fatalf("expected one pending piece, got ok=%v done=%v", ok, done)
+	}
+	if lease.Index != 1 {
+		t.Fatalf("unexpected pending piece index: %d", lease.Index)
+	}
+
+	book.MarkDone(lease.Index)
+	if _, ok, done := book.TryLease(bitmap, meta); ok || !done {
+		t.Fatalf("expected repair catalog to finish, got ok=%v done=%v", ok, done)
+	}
+}
+
 func TestAuditDownloadedPieces(t *testing.T) {
 	payload := []byte("abcdefghijklmnop")
 	piece0 := sha1.Sum(payload[:8])
@@ -83,11 +107,43 @@ func TestAuditDownloadedPieces(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	checked, err := auditDownloadedPieces(path, meta, 1)
+	checked, failed, err := auditDownloadedPieces(path, meta, 1)
 	if err != nil {
 		t.Fatalf("auditDownloadedPieces() error = %v", err)
 	}
 	if checked != 1 {
 		t.Fatalf("unexpected checked count: %d", checked)
+	}
+	if failed != -1 {
+		t.Fatalf("unexpected failed piece index: %d", failed)
+	}
+}
+
+func TestCollectCorruptPieces(t *testing.T) {
+	payload := []byte("abcdefghijklmnop")
+	piece0 := sha1.Sum(payload[:8])
+	piece1 := sha1.Sum(payload[8:])
+
+	meta := manifest.Manifest{
+		TotalLength:         int64(len(payload)),
+		StandardPieceLength: 8,
+		PieceDigests:        [][20]byte{piece0, piece1},
+	}
+
+	path := filepath.Join(t.TempDir(), "payload.bin")
+	corrupt := append([]byte(nil), payload...)
+	corrupt[9] = 'Z'
+	if err := os.WriteFile(path, corrupt, 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	indexes, err := collectCorruptPieces(path, meta, []int{0, 1})
+	if err != nil {
+		t.Fatalf("collectCorruptPieces() error = %v", err)
+	}
+
+	expected := []int{1}
+	if !reflect.DeepEqual(indexes, expected) {
+		t.Fatalf("unexpected corrupt indexes: got %v want %v", indexes, expected)
 	}
 }

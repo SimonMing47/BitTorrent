@@ -33,7 +33,13 @@ sequenceDiagram
     end
     Engine->>Disk: WriteAt + Sync
     Engine->>Engine: audit or verify
-    Engine-->>User: completed file
+    alt audit passes
+        Engine-->>User: completed file
+    else audit fails
+        Engine->>Engine: full verification
+        Engine->>Peer: strict repair download
+        Engine-->>User: repaired file
+    end
 ```
 
 ## 2. 逻辑视图
@@ -127,7 +133,8 @@ flowchart TB
     M["Manager"]
     C["catalog<br/>piece 状态"]
     F["fileStore<br/>按偏移写盘"]
-    A["audit / verify"]
+    A["audit"]
+    R["repair supervisor"]
 
     M --> W1["worker #1"]
     M --> W2["worker #2"]
@@ -142,6 +149,7 @@ flowchart TB
     WN --> F
 
     F --> A
+    A --> R
 ```
 
 ### 4.2 piece 生命周期
@@ -160,7 +168,30 @@ stateDiagram-v2
 - `catalog` 只管理 piece 状态，不碰网络
 - `peerSession` 只处理单 peer 协议交互，不碰全局调度
 - `fileStore` 只负责按偏移写盘
+- `audit` 负责快路径收尾抽样
+- `repair supervisor` 负责抽样失败后的全量定位和坏片修复
 - 校验被放在调度层收尾阶段，而不是散落在各层
+
+### 4.3 数据中心可靠性兜底
+
+```mermaid
+flowchart TD
+    A["fast path download"] --> B["sampled audit"]
+    B -->|"pass"| C["done"]
+    B -->|"fail"| D["verify all pieces on disk"]
+    D --> E["build corrupt piece list"]
+    E --> F["re-download only corrupt pieces"]
+    F --> G["strict SHA-1 check"]
+    G -->|"pass"| C
+    G -->|"bad peer"| H["drop peer and retry"]
+    H --> F
+```
+
+这个视角说明了一个关键事实：
+
+- 当前仓不是无校验下载器
+- 当前仓是“快路径宽松、异常路径严格”的下载器
+- 机房里大多数任务走快路径，少数异常任务自动切回严格路径
 
 ## 5. 物理视图
 
@@ -172,6 +203,7 @@ flowchart LR
     DC -->|"HTTPS announce + PEM"| T2["安全 tracker"]
     DC -->|"TCP peer wire"| P["公网 peers"]
     DC -->|"WriteAt / Sync"| S["本地盘 / 云盘 / 挂载卷"]
+    S -->|"audit / repair"| DC
 ```
 
 这个视角下的重点不是花哨，而是两个边界：

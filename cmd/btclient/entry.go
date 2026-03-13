@@ -165,6 +165,12 @@ func runtimeSettingsFromEnv() (engine.Settings, error) {
 		}
 	}
 
+	if value, ok, err := envInt("BTCLIENT_REPAIR_ROUNDS"); err != nil {
+		return engine.Settings{}, err
+	} else if ok {
+		settings.RepairRounds = value
+	}
+
 	return settings, nil
 }
 
