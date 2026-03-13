@@ -1,4 +1,4 @@
-package wire
+package peerwire
 
 // Bitmap tracks which pieces a peer has advertised.
 type Bitmap []byte

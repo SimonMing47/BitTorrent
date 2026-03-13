@@ -14,10 +14,10 @@ import (
 	"time"
 
 	"github.com/mac/bt-refractor/internal/bencode"
-	"github.com/mac/bt-refractor/internal/metainfo"
-	"github.com/mac/bt-refractor/internal/swarm"
-	"github.com/mac/bt-refractor/internal/tracker"
-	"github.com/mac/bt-refractor/internal/wire"
+	"github.com/mac/bt-refractor/internal/discovery"
+	"github.com/mac/bt-refractor/internal/engine"
+	"github.com/mac/bt-refractor/internal/manifest"
+	"github.com/mac/bt-refractor/internal/peerwire"
 )
 
 func TestEndToEndDownload(t *testing.T) {
@@ -76,13 +76,13 @@ func TestEndToEndDownload(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	meta, err := metainfo.Load(torrentPath)
+	meta, err := manifest.Load(torrentPath)
 	if err != nil {
-		t.Fatalf("metainfo.Load() error = %v", err)
+		t.Fatalf("manifest.Load() error = %v", err)
 	}
 
 	peerID := [20]byte{45, 66, 82, 48, 48, 48, 49, 45, 1, 2, 3}
-	reply, err := tracker.New(nil).Announce(context.Background(), meta.Announce, tracker.AnnounceRequest{
+	reply, err := discovery.New(nil).Announce(context.Background(), meta.Announce, discovery.AnnounceRequest{
 		InfoHash: meta.InfoHash,
 		PeerID:   peerID,
 		Port:     6881,
@@ -93,7 +93,7 @@ func TestEndToEndDownload(t *testing.T) {
 		t.Fatalf("tracker announce error = %v", err)
 	}
 
-	manager := swarm.New(meta, reply.Peers, peerID, log.New(io.Discard, "", 0), swarm.Settings{
+	manager := engine.New(meta, reply.Peers, peerID, log.New(io.Discard, "", 0), engine.Settings{
 		DialTimeout:   time.Second,
 		IOTimeout:     2 * time.Second,
 		BlockSize:     6,
@@ -134,7 +134,7 @@ func servePeer(t *testing.T, listener net.Listener, infoHash [20]byte, payload [
 	}
 	defer conn.Close()
 
-	greeting, err := wire.ReadGreeting(conn)
+	greeting, err := peerwire.ReadGreeting(conn)
 	if err != nil {
 		t.Errorf("ReadGreeting() error = %v", err)
 		return
@@ -145,23 +145,23 @@ func servePeer(t *testing.T, listener net.Listener, infoHash [20]byte, payload [
 	}
 
 	remoteID := [20]byte{45, 70, 65, 75, 69, 45, 80, 69, 69, 82}
-	if _, err := conn.Write(wire.NewGreeting(infoHash, remoteID).Encode()); err != nil {
+	if _, err := conn.Write(peerwire.NewGreeting(infoHash, remoteID).Encode()); err != nil {
 		t.Errorf("Write(greeting) error = %v", err)
 		return
 	}
 
 	pieceCount := (len(payload) + pieceLength - 1) / pieceLength
-	bitfield := make(wire.Bitmap, (pieceCount+7)/8)
+	bitfield := make(peerwire.Bitmap, (pieceCount+7)/8)
 	for index := 0; index < pieceCount; index++ {
 		bitfield.Mark(index)
 	}
-	if _, err := conn.Write(wire.Packet{Kind: wire.KindBitfield, Payload: bitfield}.Encode()); err != nil {
+	if _, err := conn.Write(peerwire.Packet{Kind: peerwire.KindBitfield, Payload: bitfield}.Encode()); err != nil {
 		t.Errorf("Write(bitfield) error = %v", err)
 		return
 	}
 
 	for {
-		packet, err := wire.ReadPacket(conn)
+		packet, err := peerwire.ReadPacket(conn)
 		if err != nil {
 			return
 		}
@@ -170,13 +170,13 @@ func servePeer(t *testing.T, listener net.Listener, infoHash [20]byte, payload [
 		}
 
 		switch packet.Kind {
-		case wire.KindInterested:
-			if _, err := conn.Write(wire.Control(wire.KindUnchoke).Encode()); err != nil {
+		case peerwire.KindInterested:
+			if _, err := conn.Write(peerwire.Control(peerwire.KindUnchoke).Encode()); err != nil {
 				t.Errorf("Write(unchoke) error = %v", err)
 				return
 			}
-		case wire.KindRequest:
-			pieceIndex, begin, length, err := wire.ParseRequest(packet)
+		case peerwire.KindRequest:
+			pieceIndex, begin, length, err := peerwire.ParseRequest(packet)
 			if err != nil {
 				t.Errorf("ParseRequest() error = %v", err)
 				return
@@ -186,11 +186,11 @@ func servePeer(t *testing.T, listener net.Listener, infoHash [20]byte, payload [
 				length = len(payload) - absolute
 			}
 			block := append([]byte(nil), payload[absolute:absolute+length]...)
-			if _, err := conn.Write(wire.PiecePacket(pieceIndex, begin, block).Encode()); err != nil {
+			if _, err := conn.Write(peerwire.PiecePacket(pieceIndex, begin, block).Encode()); err != nil {
 				t.Errorf("Write(piece) error = %v", err)
 				return
 			}
-		case wire.KindHave:
+		case peerwire.KindHave:
 		}
 	}
 }

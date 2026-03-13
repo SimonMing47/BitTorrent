@@ -1,4 +1,4 @@
-package swarm
+package engine
 
 import (
 	"bytes"
@@ -7,19 +7,19 @@ import (
 	"net"
 	"time"
 
-	"github.com/mac/bt-refractor/internal/tracker"
-	"github.com/mac/bt-refractor/internal/wire"
+	"github.com/mac/bt-refractor/internal/discovery"
+	"github.com/mac/bt-refractor/internal/peerwire"
 )
 
 type peerSession struct {
-	endpoint tracker.Endpoint
+	endpoint discovery.Endpoint
 	conn     net.Conn
-	bitmap   wire.Bitmap
+	bitmap   peerwire.Bitmap
 	choked   bool
 	settings Settings
 }
 
-func establishSession(ctx context.Context, endpoint tracker.Endpoint, infoHash, peerID [20]byte, settings Settings) (*peerSession, error) {
+func establishSession(ctx context.Context, endpoint discovery.Endpoint, infoHash, peerID [20]byte, settings Settings) (*peerSession, error) {
 	dialer := &net.Dialer{Timeout: settings.DialTimeout}
 	conn, err := dialer.DialContext(ctx, "tcp", endpoint.String())
 	if err != nil {
@@ -33,7 +33,7 @@ func establishSession(ctx context.Context, endpoint tracker.Endpoint, infoHash, 
 		settings: settings,
 	}
 
-	if err := session.writeGreeting(wire.NewGreeting(infoHash, peerID)); err != nil {
+	if err := session.writeGreeting(peerwire.NewGreeting(infoHash, peerID)); err != nil {
 		conn.Close()
 		return nil, err
 	}
@@ -53,13 +53,13 @@ func establishSession(ctx context.Context, endpoint tracker.Endpoint, infoHash, 
 		conn.Close()
 		return nil, err
 	}
-	if bitfield.KeepAlive || bitfield.Kind != wire.KindBitfield {
+	if bitfield.KeepAlive || bitfield.Kind != peerwire.KindBitfield {
 		conn.Close()
 		return nil, fmt.Errorf("peer %s did not send an initial bitfield", endpoint)
 	}
-	session.bitmap = append(wire.Bitmap(nil), bitfield.Payload...)
+	session.bitmap = append(peerwire.Bitmap(nil), bitfield.Payload...)
 
-	if err := session.writePacket(wire.InterestedPacket()); err != nil {
+	if err := session.writePacket(peerwire.InterestedPacket()); err != nil {
 		conn.Close()
 		return nil, err
 	}
@@ -71,12 +71,12 @@ func (s *peerSession) Close() error {
 	return s.conn.Close()
 }
 
-func (s *peerSession) Availability() wire.Bitmap {
+func (s *peerSession) Availability() peerwire.Bitmap {
 	return s.bitmap
 }
 
 func (s *peerSession) SignalHave(index int) error {
-	return s.writePacket(wire.HavePacket(index))
+	return s.writePacket(peerwire.HavePacket(index))
 }
 
 func (s *peerSession) FetchPiece(ctx context.Context, pieceIndex, pieceLength int) ([]byte, error) {
@@ -96,7 +96,7 @@ func (s *peerSession) FetchPiece(ctx context.Context, pieceIndex, pieceLength in
 				if pieceLength-requested < blockLength {
 					blockLength = pieceLength - requested
 				}
-				if err := s.writePacket(wire.RequestPacket(pieceIndex, requested, blockLength)); err != nil {
+				if err := s.writePacket(peerwire.RequestPacket(pieceIndex, requested, blockLength)); err != nil {
 					return nil, err
 				}
 				requested += blockLength
@@ -113,20 +113,20 @@ func (s *peerSession) FetchPiece(ctx context.Context, pieceIndex, pieceLength in
 		}
 
 		switch packet.Kind {
-		case wire.KindChoke:
+		case peerwire.KindChoke:
 			s.choked = true
-		case wire.KindUnchoke:
+		case peerwire.KindUnchoke:
 			s.choked = false
-		case wire.KindHave:
-			index, err := wire.ParseHave(packet)
+		case peerwire.KindHave:
+			index, err := peerwire.ParseHave(packet)
 			if err != nil {
 				return nil, err
 			}
 			s.bitmap.Mark(index)
-		case wire.KindBitfield:
-			s.bitmap = append(wire.Bitmap(nil), packet.Payload...)
-		case wire.KindPiece:
-			wrote, err := wire.CopyBlock(packet, pieceIndex, buffer)
+		case peerwire.KindBitfield:
+			s.bitmap = append(peerwire.Bitmap(nil), packet.Payload...)
+		case peerwire.KindPiece:
+			wrote, err := peerwire.CopyBlock(packet, pieceIndex, buffer)
 			if err != nil {
 				return nil, err
 			}
@@ -140,28 +140,28 @@ func (s *peerSession) FetchPiece(ctx context.Context, pieceIndex, pieceLength in
 	return buffer, nil
 }
 
-func (s *peerSession) writeGreeting(greeting wire.Greeting) error {
+func (s *peerSession) writeGreeting(greeting peerwire.Greeting) error {
 	return s.writeRaw(greeting.Encode())
 }
 
-func (s *peerSession) readGreeting() (wire.Greeting, error) {
+func (s *peerSession) readGreeting() (peerwire.Greeting, error) {
 	if err := s.conn.SetDeadline(time.Now().Add(s.settings.IOTimeout)); err != nil {
-		return wire.Greeting{}, err
+		return peerwire.Greeting{}, err
 	}
 	defer s.conn.SetDeadline(time.Time{})
-	return wire.ReadGreeting(s.conn)
+	return peerwire.ReadGreeting(s.conn)
 }
 
-func (s *peerSession) writePacket(packet wire.Packet) error {
+func (s *peerSession) writePacket(packet peerwire.Packet) error {
 	return s.writeRaw(packet.Encode())
 }
 
-func (s *peerSession) readPacket() (wire.Packet, error) {
+func (s *peerSession) readPacket() (peerwire.Packet, error) {
 	if err := s.conn.SetDeadline(time.Now().Add(s.settings.IOTimeout)); err != nil {
-		return wire.Packet{}, err
+		return peerwire.Packet{}, err
 	}
 	defer s.conn.SetDeadline(time.Time{})
-	return wire.ReadPacket(s.conn)
+	return peerwire.ReadPacket(s.conn)
 }
 
 func (s *peerSession) writeRaw(payload []byte) error {

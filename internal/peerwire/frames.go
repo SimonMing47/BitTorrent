@@ -1,4 +1,4 @@
-package wire
+package peerwire
 
 import (
 	"encoding/binary"

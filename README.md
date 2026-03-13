@@ -24,23 +24,25 @@ Current non-goals:
 
 ## Layout
 
-- `cmd/bt`: CLI entrypoint
+- `cmd/riptide`: CLI entrypoint
 - `internal/bencode`: minimal bencode parser/encoder
-- `internal/metainfo`: `.torrent` decoding and info-hash calculation
-- `internal/tracker`: HTTP announce client
-- `internal/wire`: BitTorrent handshake and peer message codec
-- `internal/swarm`: peer sessions, piece scheduling, and file assembly
+- `internal/manifest`: `.torrent` decoding and info-hash calculation
+- `internal/discovery`: tracker-facing peer discovery client
+- `internal/peerwire`: BitTorrent handshake and peer message codec
+- `internal/engine`: peer sessions, piece scheduling, and file assembly
+
+See [docs/compare-with-veggiedefender.md](/Users/mac/projects/bt-refractor/docs/compare-with-veggiedefender.md) for a direct comparison with the reference repository.
 
 ## Usage
 
 ```bash
-go run ./cmd/bt --torrent path/to/file.torrent --out path/to/output.bin
+go run ./cmd/riptide --torrent path/to/file.torrent --out path/to/output.bin
 ```
 
 For HTTPS trackers:
 
 ```bash
-go run ./cmd/bt \
+go run ./cmd/riptide \
   --torrent path/to/file.torrent \
   --out path/to/output.bin \
   --tracker-cert path/to/tracker.pem
@@ -49,7 +51,7 @@ go run ./cmd/bt \
 To explicitly skip TLS verification for the tracker:
 
 ```bash
-go run ./cmd/bt \
+go run ./cmd/riptide \
   --torrent path/to/file.torrent \
   --out path/to/output.bin \
   --tracker-skip-verify
@@ -58,12 +60,12 @@ go run ./cmd/bt \
 Positional arguments are also supported:
 
 ```bash
-go run ./cmd/bt path/to/file.torrent path/to/output.bin
+go run ./cmd/riptide path/to/file.torrent path/to/output.bin
 ```
 
 ## Verification
 
 ```bash
 go test -count=1 ./...
-go build ./cmd/bt
+go build ./cmd/riptide
 ```

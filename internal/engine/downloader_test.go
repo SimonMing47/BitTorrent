@@ -1,21 +1,21 @@
-package swarm
+package engine
 
 import (
 	"testing"
 
-	"github.com/mac/bt-refractor/internal/metainfo"
-	"github.com/mac/bt-refractor/internal/wire"
+	"github.com/mac/bt-refractor/internal/manifest"
+	"github.com/mac/bt-refractor/internal/peerwire"
 )
 
 func TestCatalogLeaseReleaseAndComplete(t *testing.T) {
-	meta := metainfo.Manifest{
+	meta := manifest.Manifest{
 		TotalLength:         9,
 		StandardPieceLength: 4,
 		PieceDigests:        make([][20]byte, 3),
 	}
 
 	book := newCatalog(meta)
-	bitmap := wire.Bitmap{0b1110_0000}
+	bitmap := peerwire.Bitmap{0b1110_0000}
 
 	first, ok, done := book.TryLease(bitmap, meta)
 	if !ok || done {

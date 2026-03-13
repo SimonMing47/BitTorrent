@@ -1,4 +1,4 @@
-package swarm
+package engine
 
 import (
 	"context"
@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mac/bt-refractor/internal/metainfo"
-	"github.com/mac/bt-refractor/internal/tracker"
-	"github.com/mac/bt-refractor/internal/wire"
+	"github.com/mac/bt-refractor/internal/discovery"
+	"github.com/mac/bt-refractor/internal/manifest"
+	"github.com/mac/bt-refractor/internal/peerwire"
 )
 
 const (
@@ -30,15 +30,15 @@ type Settings struct {
 
 // Manager coordinates piece downloads across peers.
 type Manager struct {
-	meta     metainfo.Manifest
-	peers    []tracker.Endpoint
+	meta     manifest.Manifest
+	peers    []discovery.Endpoint
 	peerID   [20]byte
 	logger   *log.Logger
 	settings Settings
 }
 
 // New constructs a manager for a torrent session.
-func New(meta metainfo.Manifest, peers []tracker.Endpoint, peerID [20]byte, logger *log.Logger, settings Settings) *Manager {
+func New(meta manifest.Manifest, peers []discovery.Endpoint, peerID [20]byte, logger *log.Logger, settings Settings) *Manager {
 	if logger == nil {
 		logger = log.New(io.Discard, "", 0)
 	}
@@ -81,7 +81,7 @@ func (m *Manager) Save(ctx context.Context, targetPath string) error {
 
 	for _, peer := range m.peers {
 		wg.Add(1)
-		go func(endpoint tracker.Endpoint) {
+		go func(endpoint discovery.Endpoint) {
 			defer wg.Done()
 			m.runPeer(ctx, endpoint, book, store)
 		}(peer)
@@ -98,7 +98,7 @@ func (m *Manager) Save(ctx context.Context, targetPath string) error {
 	return nil
 }
 
-func (m *Manager) runPeer(ctx context.Context, endpoint tracker.Endpoint, book *catalog, store *fileStore) {
+func (m *Manager) runPeer(ctx context.Context, endpoint discovery.Endpoint, book *catalog, store *fileStore) {
 	session, err := establishSession(ctx, endpoint, m.meta.InfoHash, m.peerID, m.settings)
 	if err != nil {
 		m.logger.Printf("peer %s unavailable: %v", endpoint, err)
@@ -168,11 +168,11 @@ type catalog struct {
 	completed int
 }
 
-func newCatalog(meta metainfo.Manifest) *catalog {
+func newCatalog(meta manifest.Manifest) *catalog {
 	return &catalog{states: make([]pieceState, meta.PieceCount())}
 }
 
-func (c *catalog) TryLease(bitmap wire.Bitmap, meta metainfo.Manifest) (pieceLease, bool, bool) {
+func (c *catalog) TryLease(bitmap peerwire.Bitmap, meta manifest.Manifest) (pieceLease, bool, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 

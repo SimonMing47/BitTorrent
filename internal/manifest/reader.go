@@ -1,4 +1,4 @@
-package metainfo
+package manifest
 
 import (
 	"crypto/sha1"

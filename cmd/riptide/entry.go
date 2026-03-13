@@ -9,9 +9,9 @@ import (
 	"log"
 	"os"
 
-	"github.com/mac/bt-refractor/internal/metainfo"
-	"github.com/mac/bt-refractor/internal/swarm"
-	"github.com/mac/bt-refractor/internal/tracker"
+	"github.com/mac/bt-refractor/internal/discovery"
+	"github.com/mac/bt-refractor/internal/engine"
+	"github.com/mac/bt-refractor/internal/manifest"
 )
 
 const defaultAnnouncePort = 6881
@@ -54,7 +54,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		*torrentPath,
 		*outputPath,
 		uint16(*port),
-		tracker.Options{
+		discovery.Options{
 			CertificatePath: *trackerCert,
 			SkipTLSVerify:   *trackerSkipVerify,
 		},
@@ -71,11 +71,11 @@ func execute(
 	ctx context.Context,
 	torrentPath, outputPath string,
 	port uint16,
-	trackerOptions tracker.Options,
+	trackerOptions discovery.Options,
 	quiet bool,
 	logWriter io.Writer,
 ) error {
-	meta, err := metainfo.Load(torrentPath)
+	meta, err := manifest.Load(torrentPath)
 	if err != nil {
 		return err
 	}
@@ -85,11 +85,11 @@ func execute(
 		return err
 	}
 
-	announce, err := tracker.NewWithOptions(trackerOptions)
+	announce, err := discovery.NewWithOptions(trackerOptions)
 	if err != nil {
 		return err
 	}
-	reply, err := announce.Announce(ctx, meta.Announce, tracker.AnnounceRequest{
+	reply, err := announce.Announce(ctx, meta.Announce, discovery.AnnounceRequest{
 		InfoHash: meta.InfoHash,
 		PeerID:   peerID,
 		Port:     port,
@@ -106,7 +106,7 @@ func execute(
 		logger.Printf("tracker returned %d peer(s)", len(reply.Peers))
 	}
 
-	manager := swarm.New(meta, reply.Peers, peerID, logger, swarm.Settings{})
+	manager := engine.New(meta, reply.Peers, peerID, logger, engine.Settings{})
 	return manager.Save(ctx, outputPath)
 }
 
