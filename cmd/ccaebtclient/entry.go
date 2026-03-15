@@ -12,9 +12,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mac/bt-refractor/internal/discovery"
-	"github.com/mac/bt-refractor/internal/engine"
-	"github.com/mac/bt-refractor/internal/manifest"
+	"github.com/SimonMing47/BitTorrent/internal/discovery"
+	"github.com/SimonMing47/BitTorrent/internal/engine"
+	"github.com/SimonMing47/BitTorrent/internal/manifest"
 )
 
 const defaultAnnouncePort = 6881

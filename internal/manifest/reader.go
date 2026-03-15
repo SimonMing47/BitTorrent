@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/mac/bt-refractor/internal/bencode"
+	"github.com/SimonMing47/BitTorrent/internal/bencode"
 )
 
 // Manifest 表示当前实现支持的 torrent 元数据子集。

@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/mac/bt-refractor/internal/bencode"
+	"github.com/SimonMing47/BitTorrent/internal/bencode"
 )
 
 // Endpoint 表示 tracker 返回的一个 peer 地址。

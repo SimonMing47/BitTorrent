@@ -7,8 +7,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/mac/bt-refractor/internal/manifest"
-	"github.com/mac/bt-refractor/internal/peerwire"
+	"github.com/SimonMing47/BitTorrent/internal/manifest"
+	"github.com/SimonMing47/BitTorrent/internal/peerwire"
 )
 
 func TestCatalogLeaseReleaseAndComplete(t *testing.T) {

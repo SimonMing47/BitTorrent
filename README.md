@@ -10,7 +10,7 @@
 <br />
 
 [![Go Version](https://img.shields.io/badge/Go-1.22%2B-00ADD8?logo=go&logoColor=white)](https://go.dev/)
-[![Binary](https://img.shields.io/badge/Binary-btclient-2563EB)](#-快速开始)
+[![Binary](https://img.shields.io/badge/Binary-ccaebtclient-2563EB)](#-快速开始)
 [![Mode](https://img.shields.io/badge/Mode-Data%20Center-0F766E)](#-数据中心模式)
 [![Tracker](https://img.shields.io/badge/Tracker-HTTP%20%7C%20HTTPS-7C3AED)](#-tracker-安全模式)
 [![Reliability](https://img.shields.io/badge/Reliability-Audit%20%2B%20Repair-CA8A04)](#-可靠性兜底)
@@ -33,7 +33,7 @@
 - 默认按数据中心思路跑快路径
 - 出现异常时自动切回严格修复路径
 
-编译后的二进制名称固定为 `btclient`。
+编译后的二进制名称固定为 `ccaebtclient`。
 
 ## 📚 目录
 
@@ -72,7 +72,7 @@
 
 ```mermaid
 flowchart LR
-    U["👤 用户执行 btclient"] --> CLI["cmd/btclient"]
+    U["👤 用户执行 ccaebtclient"] --> CLI["cmd/ccaebtclient"]
     CLI --> MF["manifest<br/>解析 torrent / 计算 info_hash"]
     CLI --> DS["discovery<br/>announce / peers"]
     DS --> TR["tracker"]
@@ -110,13 +110,13 @@ flowchart LR
 ### 1. 构建
 
 ```bash
-go build -o btclient ./cmd/btclient
+go build -o ccaebtclient ./cmd/ccaebtclient
 ```
 
 ### 2. 最小运行示例
 
 ```bash
-./btclient -i /data/job/input.torrent -o /data/output
+./ccaebtclient -i /data/job/input.torrent -o /data/output
 ```
 
 如果 torrent 的 `name` 是 `debian.iso`，最终输出路径就是:
@@ -136,7 +136,7 @@ go build -o btclient ./cmd/btclient
 ### 3. 带 tracker 证书的运行方式
 
 ```bash
-./btclient -i /data/job/input.torrent -o /data/output -tls-path /data/certs/tracker.pem
+./ccaebtclient -i /data/job/input.torrent -o /data/output -tls-path /data/certs/tracker.pem
 ```
 
 ### 4. 配置入口
@@ -193,7 +193,7 @@ go build -o btclient ./cmd/btclient
 - 想先稳定跑通
 
 ```bash
-./btclient \
+./ccaebtclient \
   -i /data/job/input.torrent \
   -o /data/output
 ```
@@ -206,7 +206,7 @@ BTCLIENT_BLOCK_SIZE=16384 \
 BTCLIENT_PIPELINE_DEPTH=64 \
 BTCLIENT_AUDIT_PIECES=32 \
 BTCLIENT_REPAIR_ROUNDS=3 \
-./btclient -i /data/job/input.torrent -o /data/output
+./ccaebtclient -i /data/job/input.torrent -o /data/output
 ```
 
 #### B. 内网数据中心加速档
@@ -225,7 +225,7 @@ BTCLIENT_BLOCK_SIZE=32768 \
 BTCLIENT_PIPELINE_DEPTH=32 \
 BTCLIENT_AUDIT_PIECES=32 \
 BTCLIENT_REPAIR_ROUNDS=3 \
-./btclient -i /data/job/input.torrent -o /data/output
+./ccaebtclient -i /data/job/input.torrent -o /data/output
 ```
 
 这组值的核心思想是：
@@ -243,7 +243,7 @@ BTCLIENT_BLOCK_SIZE=65536 \
 BTCLIENT_PIPELINE_DEPTH=16 \
 BTCLIENT_AUDIT_PIECES=32 \
 BTCLIENT_REPAIR_ROUNDS=3 \
-./btclient -i /data/job/input.torrent -o /data/output
+./ccaebtclient -i /data/job/input.torrent -o /data/output
 ```
 
 但这一步的代价要清楚：
@@ -267,7 +267,7 @@ BTCLIENT_REPAIR_ROUNDS=3 \
 BTCLIENT_VERIFY_PIECES=1 \
 BTCLIENT_BLOCK_SIZE=16384 \
 BTCLIENT_PIPELINE_DEPTH=64 \
-./btclient -i /data/job/input.torrent -o /data/output
+./ccaebtclient -i /data/job/input.torrent -o /data/output
 ```
 
 这个档位下的含义是：
@@ -334,7 +334,7 @@ BTCLIENT_PIPELINE_DEPTH=64 \
 ```mermaid
 flowchart TB
     subgraph CLI["入口层"]
-        E["cmd/btclient"]
+        E["cmd/ccaebtclient"]
     end
 
     subgraph CORE["核心模块"]
@@ -359,7 +359,7 @@ flowchart TB
 
 | 模块 | 作用 | 关键词 |
 | --- | --- | --- |
-| `cmd/btclient` | CLI 入口、参数解析、环境变量装配 | `-i` `-o` `-tls-path` |
+| `cmd/ccaebtclient` | CLI 入口、参数解析、环境变量装配 | `-i` `-o` `-tls-path` |
 | `internal/bencode` | 最小 bencode 编解码器 | `Marshal` `Unmarshal` |
 | `internal/manifest` | `.torrent` 解析、`info_hash`、piece 元数据 | `Load` `Parse` |
 | `internal/discovery` | tracker announce、TLS/非 TLS 访问、compact peers 解码 | `Announce` |
@@ -496,7 +496,7 @@ flowchart LR
 ```mermaid
 sequenceDiagram
     participant User as 👤 用户
-    participant CLI as btclient
+    participant CLI as ccaebtclient
     participant Manifest as manifest
     participant Tracker as tracker
     participant Engine as engine
@@ -531,7 +531,7 @@ sequenceDiagram
 
 ### 文字版步骤
 
-1. `cmd/btclient` 读取参数并生成 `peer_id`
+1. `cmd/ccaebtclient` 读取参数并生成 `peer_id`
 2. `internal/manifest` 解析 `.torrent`
 3. 基于 torrent 的 `name` 计算最终输出文件路径
 4. `internal/discovery` 向 tracker announce，得到 peers
@@ -550,7 +550,7 @@ sequenceDiagram
 
 ```text
 cmd/
-  btclient/                CLI 入口
+  ccaebtclient/                CLI 入口
 internal/
   bencode/                 最小 bencode 编解码
   manifest/                torrent 元数据解析
@@ -660,7 +660,7 @@ flowchart LR
 
 ```bash
 go test -count=1 ./...
-go build -o btclient ./cmd/btclient
+go build -o ccaebtclient ./cmd/ccaebtclient
 go test -run '^$' -bench '^BenchmarkDownloadModes$' -benchmem -benchtime=2x -count=5 ./...
 ```
 
@@ -720,7 +720,7 @@ go test -run '^$' -bench '^BenchmarkDownloadModes$' -benchmem -benchtime=2x -cou
 直接打开:
 
 ```bash
-BTCLIENT_VERIFY_PIECES=1 ./btclient -i /data/job/input.torrent -o /data/output
+BTCLIENT_VERIFY_PIECES=1 ./ccaebtclient -i /data/job/input.torrent -o /data/output
 ```
 
 </details>

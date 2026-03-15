@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mac/bt-refractor/internal/discovery"
-	"github.com/mac/bt-refractor/internal/manifest"
-	"github.com/mac/bt-refractor/internal/peerwire"
+	"github.com/SimonMing47/BitTorrent/internal/discovery"
+	"github.com/SimonMing47/BitTorrent/internal/manifest"
+	"github.com/SimonMing47/BitTorrent/internal/peerwire"
 )
 
 const (

@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mac/bt-refractor/internal/bencode"
+	"github.com/SimonMing47/BitTorrent/internal/bencode"
 )
 
 func TestBuildURL(t *testing.T) {

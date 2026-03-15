@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/mac/bt-refractor/internal/bencode"
+	"github.com/SimonMing47/BitTorrent/internal/bencode"
 )
 
 func TestParse(t *testing.T) {
